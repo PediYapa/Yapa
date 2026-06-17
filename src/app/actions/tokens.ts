@@ -4,15 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { guard, runAction, ForbiddenError, type ActionResult } from "@/lib/auth/guard";
 import { generateToken } from "@/lib/tokens";
+import { TOKEN_SCOPES } from "@/lib/token-scopes";
 
-/** Escopos válidos para tokens de API. */
-export const TOKEN_SCOPES = [
-  "pedidos:read",
-  "pedidos:write",
-  "clientes:read",
-  "clientes:write",
-  "distribuidoras:read",
-] as const;
 
 /** Resultado da criação: carrega o plaintext (exibido uma única vez). */
 export type CriarTokenResult =
