@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Trash2, Package, Search } from "lucide-react";
+import Image from "next/image";
+import { Plus, Pencil, Trash2, Package, Search, ImageOff } from "lucide-react";
 import type { ProdutoRow, ProdutoCategoria } from "@/lib/database.types";
 import { salvarProduto, excluirProduto } from "@/app/actions/produtos";
 import type { ActionResult } from "@/lib/auth/guard";
@@ -57,6 +58,10 @@ export function ProdutosClient({
   const [busca, setBusca] = useState("");
   const [editando, setEditando] = useState<ProdutoRow | null>(null);
   const [aberto, setAberto] = useState(false);
+  // preview da imagem no diálogo: string = URL a exibir, null = sem imagem
+  const [preview, setPreview] = useState<string | null>(null);
+  const [removerImagem, setRemoverImagem] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [state, formAction] = useActionState<ActionResult | undefined, FormData>(salvarProduto, undefined);
 
   useEffect(() => {
@@ -77,11 +82,28 @@ export function ProdutosClient({
 
   function novo() {
     setEditando(null);
+    setPreview(null);
+    setRemoverImagem(false);
     setAberto(true);
   }
   function editar(p: ProdutoRow) {
     setEditando(p);
+    setPreview(p.imagem_url);
+    setRemoverImagem(false);
     setAberto(true);
+  }
+
+  function onSelecionarArquivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPreview(URL.createObjectURL(file));
+      setRemoverImagem(false);
+    }
+  }
+  function limparImagem() {
+    setPreview(null);
+    setRemoverImagem(true);
+    if (fileRef.current) fileRef.current.value = "";
   }
   async function remover(p: ProdutoRow) {
     if (!confirm(`Excluir o produto ${p.nome}?`)) return;
@@ -119,6 +141,7 @@ export function ProdutosClient({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-14"></TableHead>
                 <TableHead>Produto</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead className="text-right">Preço</TableHead>
@@ -129,6 +152,22 @@ export function ProdutosClient({
             <TableBody>
               {filtrados.map((p) => (
                 <TableRow key={p.id}>
+                  <TableCell>
+                    {p.imagem_url ? (
+                      <Image
+                        src={p.imagem_url}
+                        alt={p.nome}
+                        width={40}
+                        height={40}
+                        className="size-10 rounded-lg object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                        <ImageOff className="size-4" />
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="font-medium">{p.nome}</TableCell>
                   <TableCell>
                     <Badge variant="primary">{CATEGORIA_LABEL[p.categoria]}</Badge>
@@ -197,6 +236,37 @@ export function ProdutosClient({
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="descricao">Descrição</Label>
               <Textarea id="descricao" name="descricao" defaultValue={editando?.descricao ?? ""} />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="imagem">Imagem do produto</Label>
+              <input type="hidden" name="remover_imagem" value={String(removerImagem)} />
+              <div className="flex items-center gap-3">
+                {preview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={preview} alt="Pré-visualização" className="size-16 rounded-lg border border-border object-cover" />
+                ) : (
+                  <div className="flex size-16 items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground">
+                    <ImageOff className="size-5" />
+                  </div>
+                )}
+                <div className="flex flex-col gap-1">
+                  <Input
+                    ref={fileRef}
+                    id="imagem"
+                    name="imagem"
+                    type="file"
+                    accept="image/*"
+                    onChange={onSelecionarArquivo}
+                    className="text-sm"
+                  />
+                  {preview && (
+                    <button type="button" onClick={limparImagem} className="self-start text-xs text-destructive hover:underline">
+                      Remover imagem
+                    </button>
+                  )}
+                  <p className="text-xs text-muted-foreground">PNG/JPG até 5 MB. Usada no catálogo e nos fluxos do bot.</p>
+                </div>
+              </div>
             </div>
           </div>
           {state && !state.ok && <p className="text-sm text-destructive">{state.error}</p>}

@@ -19,12 +19,17 @@ export type FormaPagamento = "dlocal" | "pix" | "dinheiro";
 export type EntregaStatus = "aguardando" | "coletado" | "em_entrega" | "entregue" | "cancelada";
 export type PagamentoStatus = "pendente" | "pago" | "estornado" | "falha";
 export type ConversaStatus = "aberta" | "pendente" | "resolvida" | "arquivada";
+export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano";
 
 export type OrgRow = {
   id: string;
   nome: string;
   cidade: string | null;
   pais: string | null;
+  zapi_instance: string | null;
+  zapi_token: string | null;
+  zapi_client_token: string | null;
+  zapi_webhook_secret: string | null;
   created_at: string;
 };
 
@@ -181,6 +186,13 @@ export type ConversaMensagem = {
   em: string;
 };
 
+/** Estado do cliente dentro de um fluxo (gravado em conversas.fluxo_estado). */
+export type FluxoEstado = {
+  fluxo_id: string;
+  no_atual: string;
+  atualizado_em: string;
+};
+
 export type ConversaRow = {
   id: string;
   org_id: string;
@@ -192,8 +204,48 @@ export type ConversaRow = {
   mensagens: ConversaMensagem[];
   ultima_mensagem_em: string | null;
   pedido_id: string | null;
+  fluxo_estado: FluxoEstado | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Botão de um nó de fluxo (id estável usado como sourceHandle no edge). */
+export type FluxoBotao = { id: string; label: string };
+
+/** Dados de um nó do fluxo (node.data do React Flow). */
+export type FluxoNodeData = {
+  tipo: FluxoNoTipo;
+  texto?: string;
+  imagem_url?: string;
+  produto_id?: string;
+  botoes?: FluxoBotao[];
+};
+
+export type FluxoNode = {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  data: FluxoNodeData;
+};
+
+export type FluxoEdge = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+};
+
+export type FluxoRow = {
+  id: string;
+  org_id: string;
+  nome: string;
+  ativo: boolean;
+  nodes: FluxoNode[];
+  edges: FluxoEdge[];
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
 };
 
 export type ApiTokenRow = {
@@ -232,6 +284,7 @@ export type Database = {
       pagamentos: TableShape<PagamentoRow>;
       conversas: TableShape<ConversaRow>;
       api_tokens: TableShape<ApiTokenRow>;
+      fluxos: TableShape<FluxoRow>;
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };

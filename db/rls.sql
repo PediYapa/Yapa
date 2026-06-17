@@ -33,15 +33,20 @@ alter table yapa.pedido_itens    enable row level security;
 alter table yapa.entregas        enable row level security;
 alter table yapa.pagamentos      enable row level security;
 alter table yapa.conversas       enable row level security;
+alter table yapa.fluxos          enable row level security;
 alter table yapa.api_tokens      enable row level security;
 alter table yapa.hubs            enable row level security;
 alter table yapa.rotas           enable row level security;
 alter table yapa.gps_pings       enable row level security;
 
--- orgs: vê só a própria
+-- orgs: vê só a própria; owner/gerente pode atualizar
 drop policy if exists "orgs_select_own" on yapa.orgs;
 create policy "orgs_select_own" on yapa.orgs
   for select using (id = yapa.current_org_id());
+drop policy if exists "orgs_update_manager" on yapa.orgs;
+create policy "orgs_update_manager" on yapa.orgs
+  for update using (id = yapa.current_org_id() and yapa.is_manager())
+  with check (id = yapa.current_org_id() and yapa.is_manager());
 
 -- user_profiles
 drop policy if exists "profiles_select_same_org" on yapa.user_profiles;
@@ -62,7 +67,7 @@ declare t text;
 begin
   foreach t in array array[
     'clientes','distribuidoras','produtos','entregadores','pedidos',
-    'pedido_itens','entregas','pagamentos','conversas','hubs','rotas','gps_pings'
+    'pedido_itens','entregas','pagamentos','conversas','fluxos','hubs','rotas','gps_pings'
   ] loop
     execute format('drop policy if exists "%1$s_all_same_org" on yapa.%1$s;', t);
     execute format(

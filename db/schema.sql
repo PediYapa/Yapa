@@ -18,6 +18,11 @@ create table if not exists yapa.orgs (
   nome text not null,
   cidade text default 'Ciudad del Este',
   pais text default 'PY',
+  -- Credenciais Z-API (WhatsApp). Podem ser sobrescritas por variáveis de ambiente.
+  zapi_instance text,
+  zapi_token text,
+  zapi_client_token text,
+  zapi_webhook_secret text,
   created_at timestamptz not null default now()
 );
 
@@ -241,11 +246,30 @@ create table if not exists yapa.conversas (
   mensagens jsonb not null default '[]'::jsonb,
   ultima_mensagem_em timestamptz,
   pedido_id uuid references yapa.pedidos on delete set null,
+  -- posição do cliente no fluxo do bot: { fluxo_id, no_atual, atualizado_em }
+  fluxo_estado jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index if not exists idx_conversas_org_status on yapa.conversas(org_id, status);
 create index if not exists idx_conversas_telefone on yapa.conversas(org_id, telefone);
+
+-- ---------------------------------------------------------------------------
+-- Fluxos (construtor visual do bot — nós/arestas do React Flow em jsonb)
+-- ---------------------------------------------------------------------------
+create table if not exists yapa.fluxos (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references yapa.orgs on delete cascade,
+  nome text not null,
+  ativo boolean not null default false,           -- só um ativo por org (índice abaixo)
+  nodes jsonb not null default '[]'::jsonb,
+  edges jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+create index if not exists idx_fluxos_org on yapa.fluxos(org_id) where deleted_at is null;
+create unique index if not exists uq_fluxos_um_ativo on yapa.fluxos(org_id) where ativo and deleted_at is null;
 
 -- ---------------------------------------------------------------------------
 -- API tokens (superfície pública /api/v1 — consumida por Make/Z-API)
@@ -297,6 +321,12 @@ create table if not exists yapa.gps_pings (
   registrado_em timestamptz not null default now()
 );
 
+-- Grants — sem isso os roles anon/authenticated não acessam o schema via PostgREST
+grant usage on schema yapa to anon, authenticated, service_role;
+grant all on all tables    in schema yapa to anon, authenticated, service_role;
+grant all on all sequences in schema yapa to anon, authenticated, service_role;
+grant execute on all functions in schema yapa to anon, authenticated, service_role;
+
 -- updated_at automático
 create or replace function yapa.touch_updated_at() returns trigger as $$
 begin new.updated_at = now(); return new; end; $$ language plpgsql;
@@ -306,7 +336,7 @@ declare t text;
 begin
   foreach t in array array[
     'user_profiles','clientes','distribuidoras','produtos','entregadores',
-    'pedidos','entregas','pagamentos','conversas'
+    'pedidos','entregas','pagamentos','conversas','fluxos'
   ] loop
     execute format(
       'drop trigger if exists trg_touch_%1$s on yapa.%1$s;

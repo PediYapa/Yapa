@@ -1,0 +1,594 @@
+"use client";
+
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Handle,
+  Position,
+  addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeProps,
+  type NodeChange,
+  type EdgeChange,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import {
+  Play,
+  MessageSquare,
+  Image as ImageIcon,
+  MousePointerClick,
+  ShoppingCart,
+  UserRound,
+  Plus,
+  Save,
+  Trash2,
+  Power,
+  PowerOff,
+  X,
+  Workflow,
+} from "lucide-react";
+import type { FluxoRow, FluxoNodeData, FluxoNoTipo, FluxoBotao } from "@/lib/database.types";
+import { salvarFluxo, ativarFluxo, desativarFluxo, excluirFluxo } from "@/app/actions/fluxos";
+import { PageHeader } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { gs } from "@/lib/format";
+
+type ProdutoOpt = { id: string; nome: string; preco_gs: number; imagem_url: string | null };
+type NoData = FluxoNodeData & Record<string, unknown>;
+type NoFluxo = Node<NoData>;
+
+// Contexto p/ o custom node exibir nome/imagem do produto escolhido.
+const ProdutosCtx = createContext<Map<string, ProdutoOpt>>(new Map());
+
+const META: Record<FluxoNoTipo, { label: string; icon: typeof Play; cor: string }> = {
+  inicio: { label: "Início", icon: Play, cor: "text-emerald-600" },
+  texto: { label: "Texto", icon: MessageSquare, cor: "text-sky-600" },
+  imagem: { label: "Imagem", icon: ImageIcon, cor: "text-violet-600" },
+  botoes: { label: "Botões", icon: MousePointerClick, cor: "text-amber-600" },
+  produto: { label: "Produto", icon: ShoppingCart, cor: "text-rose-600" },
+  humano: { label: "Atendente", icon: UserRound, cor: "text-slate-600" },
+};
+
+/** Nó visual do fluxo. Botões expõem um handle de saída por botão (ramificação). */
+function NoCard({ data, selected }: NodeProps<NoFluxo>) {
+  const produtos = useContext(ProdutosCtx);
+  const d = data as FluxoNodeData;
+  const meta = META[d.tipo];
+  const Icon = meta.icon;
+  const prod = d.produto_id ? produtos.get(d.produto_id) : undefined;
+
+  return (
+    <div
+      className={`min-w-44 max-w-56 rounded-xl border bg-card shadow-sm ${
+        selected ? "border-primary ring-2 ring-primary/30" : "border-border"
+      }`}
+    >
+      {d.tipo !== "inicio" && <Handle type="target" position={Position.Top} className="!size-2.5 !bg-muted-foreground" />}
+
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+        <Icon className={`size-4 ${meta.cor}`} />
+        <span className="text-xs font-semibold">{meta.label}</span>
+      </div>
+
+      <div className="px-3 py-2 text-xs text-muted-foreground">
+        {d.tipo === "inicio" && <span>Ponto de entrada da conversa.</span>}
+        {d.tipo === "texto" && <span className="line-clamp-3 text-foreground">{d.texto || "(sem texto)"}</span>}
+        {d.tipo === "imagem" && (
+          <span className="line-clamp-2">{d.imagem_url ? "Imagem (URL definida)" : "(sem imagem)"}</span>
+        )}
+        {d.tipo === "produto" && (
+          <span className="text-foreground">{prod ? `${prod.nome} — ${gs(prod.preco_gs)}` : "(escolha um produto)"}</span>
+        )}
+        {d.tipo === "humano" && <span>Transfere para atendimento humano.</span>}
+        {d.tipo === "botoes" && (
+          <div className="space-y-1">
+            <p className="text-foreground">{d.texto || "(pergunta)"}</p>
+            <div className="flex flex-col gap-1 pt-1">
+              {(d.botoes ?? []).length === 0 && <span className="italic">(sem botões)</span>}
+              {(d.botoes ?? []).map((b) => (
+                <span key={b.id} className="rounded-md bg-muted px-2 py-0.5 text-center text-[11px] text-foreground">
+                  {b.label || "—"}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Saídas */}
+      {d.tipo === "botoes" ? (
+        (d.botoes ?? []).map((b, i, arr) => (
+          <Handle
+            key={b.id}
+            id={b.id}
+            type="source"
+            position={Position.Bottom}
+            style={{ left: `${((i + 1) / (arr.length + 1)) * 100}%` }}
+            className="!size-2.5 !bg-amber-500"
+          />
+        ))
+      ) : d.tipo === "humano" ? null : (
+        <Handle type="source" position={Position.Bottom} className="!size-2.5 !bg-primary" />
+      )}
+    </div>
+  );
+}
+
+const nodeTypes = { noFluxo: NoCard };
+
+function novoNo(tipo: FluxoNoTipo, i: number): NoFluxo {
+  const data: FluxoNodeData =
+    tipo === "botoes"
+      ? { tipo, texto: "Escolha uma opção:", botoes: [{ id: crypto.randomUUID(), label: "Opção 1" }] }
+      : { tipo, texto: "" };
+  return {
+    id: crypto.randomUUID(),
+    type: "noFluxo",
+    position: { x: 120 + (i % 3) * 80, y: 80 + i * 70 },
+    data: data as NoData,
+  };
+}
+
+export function FluxosClient({
+  fluxos,
+  produtos,
+  canWrite,
+}: {
+  fluxos: FluxoRow[];
+  produtos: ProdutoOpt[];
+  canWrite: boolean;
+}) {
+  const router = useRouter();
+  const produtosMap = useMemo(() => new Map(produtos.map((p) => [p.id, p])), [produtos]);
+
+  const [editId, setEditId] = useState<string | "novo" | null>(null);
+  const [nome, setNome] = useState("");
+  const [nodes, setNodes] = useState<NoFluxo[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [selId, setSelId] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [addSeq, setAddSeq] = useState(0);
+
+  const fluxoAtual = editId && editId !== "novo" ? fluxos.find((f) => f.id === editId) : undefined;
+  const selNode = nodes.find((n) => n.id === selId) ?? null;
+
+  function abrir(f: FluxoRow) {
+    setEditId(f.id);
+    setNome(f.nome);
+    setNodes((f.nodes ?? []).map((n) => ({ ...n, type: "noFluxo", data: n.data as NoData })));
+    setEdges((f.edges ?? []).map((e) => ({ ...e })));
+    setSelId(null);
+    setErro(null);
+  }
+  function novoFluxo() {
+    setEditId("novo");
+    setNome("Novo fluxo");
+    setNodes([novoNo("inicio", 0)]);
+    setEdges([]);
+    setSelId(null);
+    setErro(null);
+  }
+  function fechar() {
+    setEditId(null);
+    setSelId(null);
+  }
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange<NoFluxo>[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [],
+  );
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [],
+  );
+  const onConnect = useCallback(
+    (conn: Connection) => {
+      setEdges((eds) => {
+        // Mantém no máximo uma saída por handle (e por nó simples).
+        const limpos = eds.filter((e) => {
+          if (e.source !== conn.source) return true;
+          return (e.sourceHandle ?? null) !== (conn.sourceHandle ?? null);
+        });
+        return addEdge(conn, limpos);
+      });
+    },
+    [],
+  );
+
+  function addNo(tipo: FluxoNoTipo) {
+    const n = novoNo(tipo, addSeq + 1);
+    setAddSeq((s) => s + 1);
+    setNodes((nds) => [...nds, n]);
+    setSelId(n.id);
+  }
+
+  function patchSel(patch: Partial<FluxoNodeData>) {
+    if (!selId) return;
+    setNodes((nds) =>
+      nds.map((n) => (n.id === selId ? { ...n, data: { ...(n.data as FluxoNodeData), ...patch } as NoData } : n)),
+    );
+  }
+
+  function removerSel() {
+    if (!selId) return;
+    setNodes((nds) => nds.filter((n) => n.id !== selId));
+    setEdges((eds) => eds.filter((e) => e.source !== selId && e.target !== selId));
+    setSelId(null);
+  }
+
+  // Botões do nó selecionado (tipo "botoes")
+  function addBotao() {
+    const d = selNode?.data as FluxoNodeData | undefined;
+    if (!d) return;
+    const atuais = d.botoes ?? [];
+    if (atuais.length >= 3) return;
+    patchSel({ botoes: [...atuais, { id: crypto.randomUUID(), label: `Opção ${atuais.length + 1}` }] });
+  }
+  function editBotao(id: string, label: string) {
+    const d = selNode?.data as FluxoNodeData | undefined;
+    patchSel({ botoes: (d?.botoes ?? []).map((b) => (b.id === id ? { ...b, label } : b)) });
+  }
+  function removerBotao(id: string) {
+    const d = selNode?.data as FluxoNodeData | undefined;
+    patchSel({ botoes: (d?.botoes ?? []).filter((b) => b.id !== id) });
+    setEdges((eds) => eds.filter((e) => e.sourceHandle !== id));
+  }
+
+  async function salvar() {
+    setErro(null);
+    setSalvando(true);
+    const payload = {
+      id: editId && editId !== "novo" ? editId : undefined,
+      nome,
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        position: n.position,
+        data: n.data as FluxoNodeData,
+      })),
+      edges: edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        targetHandle: e.targetHandle ?? null,
+      })),
+    };
+    const res = await salvarFluxo(payload);
+    setSalvando(false);
+    if (!res.ok) {
+      setErro(res.error);
+      return;
+    }
+    if (editId === "novo" && res.id) setEditId(res.id);
+    router.refresh();
+  }
+
+  async function alternarAtivo() {
+    if (!fluxoAtual) return;
+    const res = fluxoAtual.ativo ? await desativarFluxo(fluxoAtual.id) : await ativarFluxo(fluxoAtual.id);
+    if (!res.ok) setErro(res.error);
+    else router.refresh();
+  }
+
+  async function excluir() {
+    if (!fluxoAtual) return;
+    if (!confirm(`Excluir o fluxo "${fluxoAtual.nome}"?`)) return;
+    const res = await excluirFluxo(fluxoAtual.id);
+    if (!res.ok) setErro(res.error);
+    else {
+      fechar();
+      router.refresh();
+    }
+  }
+
+  const PALETA: FluxoNoTipo[] = ["texto", "imagem", "botoes", "produto", "humano"];
+
+  return (
+    <div>
+      <PageHeader
+        title="Fluxos"
+        description="Monte a conversa do bot no WhatsApp: texto, imagem, botões e produtos do catálogo."
+        action={canWrite ? <Button onClick={novoFluxo}><Plus /> Novo fluxo</Button> : undefined}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+        {/* Lista de fluxos */}
+        <div className="space-y-2">
+          {fluxos.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+              Nenhum fluxo ainda.
+            </p>
+          ) : (
+            fluxos.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => abrir(f)}
+                className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
+                  editId === f.id ? "border-primary bg-primary/5" : "border-border hover:bg-muted"
+                }`}
+              >
+                <span className="flex items-center gap-2 truncate">
+                  <Workflow className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate font-medium">{f.nome}</span>
+                </span>
+                {f.ativo && <Badge variant="success">Ativo</Badge>}
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* Editor */}
+        {editId === null ? (
+          <EmptyState
+            icon={<Workflow />}
+            title="Selecione ou crie um fluxo"
+            description="O fluxo ativo passa a responder automaticamente as mensagens recebidas no WhatsApp."
+            action={canWrite ? <Button onClick={novoFluxo}><Plus /> Novo fluxo</Button> : undefined}
+          />
+        ) : (
+          <div className="rounded-2xl border border-border bg-card">
+            {/* Toolbar */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+              <Input
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                className="h-9 max-w-xs"
+                placeholder="Nome do fluxo"
+                disabled={!canWrite}
+              />
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {fluxoAtual && (
+                  <Button variant={fluxoAtual.ativo ? "outline" : "default"} size="sm" onClick={alternarAtivo} disabled={!canWrite}>
+                    {fluxoAtual.ativo ? <><PowerOff /> Desativar</> : <><Power /> Ativar</>}
+                  </Button>
+                )}
+                <Button variant="default" size="sm" onClick={salvar} disabled={!canWrite || salvando}>
+                  <Save /> {salvando ? "Salvando…" : "Salvar"}
+                </Button>
+                {fluxoAtual && (
+                  <Button variant="ghost" size="icon" onClick={excluir} disabled={!canWrite} aria-label="Excluir">
+                    <Trash2 />
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon" onClick={fechar} aria-label="Fechar"><X /></Button>
+              </div>
+            </div>
+
+            {/* Paleta */}
+            {canWrite && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+                <span className="text-xs text-muted-foreground">Adicionar:</span>
+                {PALETA.map((t) => {
+                  const Icon = META[t].icon;
+                  return (
+                    <Button key={t} variant="outline" size="sm" onClick={() => addNo(t)}>
+                      <Icon /> {META[t].label}
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
+
+            {erro && <p className="border-b border-border px-3 py-2 text-sm text-destructive">{erro}</p>}
+
+            <div className="grid lg:grid-cols-[1fr_280px]">
+              {/* Canvas */}
+              <div className="h-[60vh] min-h-80">
+                <ProdutosCtx.Provider value={produtosMap}>
+                  <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    nodeTypes={nodeTypes}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onNodeClick={(_, n) => setSelId(n.id)}
+                    onPaneClick={() => setSelId(null)}
+                    nodesConnectable={canWrite}
+                    nodesDraggable={canWrite}
+                    fitView
+                    proOptions={{ hideAttribution: true }}
+                  >
+                    <Background />
+                    <Controls showInteractive={false} />
+                  </ReactFlow>
+                </ProdutosCtx.Provider>
+              </div>
+
+              {/* Inspetor */}
+              <div className="border-t border-border p-3 lg:border-l lg:border-t-0">
+                {!selNode ? (
+                  <p className="text-sm text-muted-foreground">
+                    Clique num nó para editar. Arraste das bolinhas para conectar os passos.
+                  </p>
+                ) : (
+                  <NoInspector
+                    node={selNode}
+                    produtos={produtos}
+                    canWrite={canWrite}
+                    onPatch={patchSel}
+                    onRemover={removerSel}
+                    onAddBotao={addBotao}
+                    onEditBotao={editBotao}
+                    onRemoverBotao={removerBotao}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NoInspector({
+  node,
+  produtos,
+  canWrite,
+  onPatch,
+  onRemover,
+  onAddBotao,
+  onEditBotao,
+  onRemoverBotao,
+}: {
+  node: NoFluxo;
+  produtos: ProdutoOpt[];
+  canWrite: boolean;
+  onPatch: (patch: Partial<FluxoNodeData>) => void;
+  onRemover: () => void;
+  onAddBotao: () => void;
+  onEditBotao: (id: string, label: string) => void;
+  onRemoverBotao: (id: string) => void;
+}) {
+  const d = node.data as FluxoNodeData;
+  const meta = META[d.tipo];
+  const Icon = meta.icon;
+  const prod = d.produto_id ? produtos.find((p) => p.id === d.produto_id) : undefined;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Icon className={`size-4 ${meta.cor}`} />
+        <span className="text-sm font-semibold">{meta.label}</span>
+      </div>
+
+      {d.tipo === "inicio" && (
+        <p className="text-xs text-muted-foreground">
+          Entrada do fluxo. Conecte-o ao primeiro passo. (Não envia mensagem.)
+        </p>
+      )}
+
+      {d.tipo === "texto" && (
+        <div className="space-y-1">
+          <Label>Mensagem</Label>
+          <Textarea
+            value={d.texto ?? ""}
+            onChange={(e) => onPatch({ texto: e.target.value })}
+            placeholder="Texto enviado ao cliente"
+            disabled={!canWrite}
+          />
+        </div>
+      )}
+
+      {d.tipo === "imagem" && (
+        <>
+          <div className="space-y-1">
+            <Label>URL da imagem</Label>
+            <Input
+              value={d.imagem_url ?? ""}
+              onChange={(e) => onPatch({ imagem_url: e.target.value })}
+              placeholder="https://…"
+              disabled={!canWrite}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Legenda (opcional)</Label>
+            <Textarea value={d.texto ?? ""} onChange={(e) => onPatch({ texto: e.target.value })} disabled={!canWrite} />
+          </div>
+        </>
+      )}
+
+      {d.tipo === "produto" && (
+        <>
+          <div className="space-y-1">
+            <Label>Produto do catálogo</Label>
+            <Select
+              value={d.produto_id ?? ""}
+              onChange={(e) => onPatch({ produto_id: e.target.value || undefined })}
+              disabled={!canWrite}
+            >
+              <option value="">Selecione…</option>
+              {produtos.map((p) => (
+                <option key={p.id} value={p.id}>{p.nome}</option>
+              ))}
+            </Select>
+          </div>
+          {prod && (
+            <div className="flex items-center gap-2 rounded-lg border border-border p-2">
+              {prod.imagem_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={prod.imagem_url} alt={prod.nome} className="size-12 rounded object-cover" />
+              ) : (
+                <div className="flex size-12 items-center justify-center rounded bg-muted text-muted-foreground">
+                  <ImageIcon className="size-4" />
+                </div>
+              )}
+              <div className="text-xs">
+                <p className="font-medium">{prod.nome}</p>
+                <p className="text-muted-foreground">{gs(prod.preco_gs)}</p>
+                {!prod.imagem_url && <p className="text-amber-600">Sem imagem no catálogo</p>}
+              </div>
+            </div>
+          )}
+          <div className="space-y-1">
+            <Label>Texto adicional (opcional)</Label>
+            <Textarea value={d.texto ?? ""} onChange={(e) => onPatch({ texto: e.target.value })} disabled={!canWrite} />
+          </div>
+        </>
+      )}
+
+      {d.tipo === "humano" && (
+        <div className="space-y-1">
+          <Label>Mensagem antes de transferir (opcional)</Label>
+          <Textarea
+            value={d.texto ?? ""}
+            onChange={(e) => onPatch({ texto: e.target.value })}
+            placeholder="Ex.: Um atendente vai te ajudar agora."
+            disabled={!canWrite}
+          />
+          <p className="text-xs text-muted-foreground">Liga o handoff humano e pausa o bot nesta conversa.</p>
+        </div>
+      )}
+
+      {d.tipo === "botoes" && (
+        <>
+          <div className="space-y-1">
+            <Label>Pergunta</Label>
+            <Textarea value={d.texto ?? ""} onChange={(e) => onPatch({ texto: e.target.value })} disabled={!canWrite} />
+          </div>
+          <div className="space-y-2">
+            <Label>Botões (máx. 3)</Label>
+            {(d.botoes ?? []).map((b: FluxoBotao) => (
+              <div key={b.id} className="flex items-center gap-1">
+                <Input value={b.label} onChange={(e) => onEditBotao(b.id, e.target.value)} disabled={!canWrite} className="h-9" />
+                {canWrite && (
+                  <Button variant="ghost" size="icon" onClick={() => onRemoverBotao(b.id)} aria-label="Remover botão">
+                    <X />
+                  </Button>
+                )}
+              </div>
+            ))}
+            {canWrite && (d.botoes ?? []).length < 3 && (
+              <Button variant="outline" size="sm" onClick={onAddBotao}><Plus /> Botão</Button>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Cada botão tem uma saída própria — conecte ao passo correspondente.
+            </p>
+          </div>
+        </>
+      )}
+
+      {canWrite && d.tipo !== "inicio" && (
+        <Button variant="ghost" size="sm" onClick={onRemover} className="text-destructive">
+          <Trash2 /> Remover nó
+        </Button>
+      )}
+    </div>
+  );
+}

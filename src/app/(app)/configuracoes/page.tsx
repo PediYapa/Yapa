@@ -1,4 +1,4 @@
-import { Building2, ArrowLeftRight, Plug } from "lucide-react";
+import { Building2, ArrowLeftRight, MessageCircle, Plug } from "lucide-react";
 import { guard } from "@/lib/auth/guard";
 import { can } from "@/lib/auth/permissions";
 import { PageHeader } from "@/components/layout/page-header";
@@ -6,18 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { gs } from "@/lib/format";
 import { taxaBrlParaGs } from "@/lib/intel/cambio";
-import { zapiConfigurado } from "@/lib/integrations/zapi";
+import { zapiConfigurado, type ZapiConfig } from "@/lib/integrations/zapi";
 import { dlocalConfigurado } from "@/lib/integrations/dlocal";
 import type { OrgRow } from "@/lib/database.types";
-import { ConfiguracoesClient } from "./configuracoes-client";
+import { OrgForm, ZapiForm } from "./configuracoes-client";
 
 export const dynamic = "force-dynamic";
-
-function statusBadge(conectado: boolean) {
-  return conectado
-    ? <Badge variant="success">Conectado</Badge>
-    : <Badge variant="warning">Pendente</Badge>;
-}
 
 export default async function ConfiguracoesPage() {
   const { supabase, profile } = await guard("configuracoes", "read");
@@ -27,11 +21,14 @@ export default async function ConfiguracoesPage() {
   const taxa = taxaBrlParaGs();
   const canWrite = can(profile, "configuracoes", "write");
 
-  const integracoes = [
-    { nome: "Z-API (WhatsApp)", ok: zapiConfigurado() },
-    { nome: "DLocal (pagamentos)", ok: dlocalConfigurado() },
-    { nome: "OpenAI (atendimento)", ok: !!process.env.OPENAI_API_KEY },
-  ];
+  // Credenciais Z-API: banco tem precedência sobre env vars
+  const zapiDbCfg: ZapiConfig | null =
+    org?.zapi_instance && org?.zapi_token
+      ? { instance: org.zapi_instance, token: org.zapi_token, clientToken: org.zapi_client_token }
+      : null;
+  const zapiOk = zapiConfigurado(zapiDbCfg);
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://seu-dominio.vercel.app";
 
   return (
     <div className="space-y-6">
@@ -45,7 +42,7 @@ export default async function ConfiguracoesPage() {
           <CardContent className="space-y-4">
             {org ? (
               <>
-                <ConfiguracoesClient orgId={org.id} nome={org.nome} canWrite={canWrite} />
+                <OrgForm orgId={org.id} nome={org.nome} canWrite={canWrite} />
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <dt className="text-muted-foreground">Cidade</dt>
@@ -76,19 +73,52 @@ export default async function ConfiguracoesPage() {
         </Card>
       </div>
 
+      {org && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessageCircle className="size-4" />
+              Z-API (WhatsApp)
+              <span className={`ml-auto text-xs font-normal px-2 py-0.5 rounded-full border ${zapiOk ? "border-success/25 bg-success/10 text-success" : "border-warning/30 bg-warning/15 text-warning-foreground"}`}>
+                {zapiOk ? "Conectado" : "Pendente"}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ZapiForm
+              data={{
+                orgId: org.id,
+                instance: org.zapi_instance,
+                token: org.zapi_token,
+                clientToken: org.zapi_client_token,
+                webhookSecret: org.zapi_webhook_secret,
+                webhookUrl: appUrl,
+              }}
+              canWrite={canWrite}
+            />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Plug className="size-4" /> Integrações</CardTitle>
+          <CardTitle className="flex items-center gap-2"><Plug className="size-4" /> Outras integrações</CardTitle>
         </CardHeader>
         <CardContent>
           <ul className="divide-y divide-border">
-            {integracoes.map((i) => (
+            {([
+              { nome: "DLocal (pagamentos)", ok: dlocalConfigurado() },
+              { nome: "OpenAI (atendimento)", ok: !!process.env.OPENAI_API_KEY },
+            ] as const).map((i) => (
               <li key={i.nome} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
                 <span className="text-sm font-medium">{i.nome}</span>
-                {statusBadge(i.ok)}
+                <Badge variant={i.ok ? "success" : "warning"}>{i.ok ? "Conectado" : "Pendente"}</Badge>
               </li>
             ))}
           </ul>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Configurar via variáveis de ambiente no painel Vercel (DLOCAL_API_KEY, OPENAI_API_KEY).
+          </p>
         </CardContent>
       </Card>
     </div>
