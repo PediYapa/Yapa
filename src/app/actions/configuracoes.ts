@@ -5,8 +5,13 @@ import { z } from "zod";
 import { guard, runAction, type ActionResult } from "@/lib/auth/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+const uuidLike = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  "ID inválido",
+);
+
 const orgSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidLike,
   nome: z.string().min(1, "Nome obrigatório").max(120),
 });
 
@@ -32,7 +37,7 @@ export async function salvarOrg(_prev: ActionResult | undefined, formData: FormD
 }
 
 const zapiSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidLike,
   zapi_instance: z.string().max(200),
   zapi_token: z.string().max(500),
   zapi_client_token: z.string().max(500),
