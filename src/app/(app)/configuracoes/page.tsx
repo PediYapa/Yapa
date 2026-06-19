@@ -9,7 +9,7 @@ import { taxaBrlParaGs } from "@/lib/intel/cambio";
 import { zapiConfigurado, type ZapiConfig } from "@/lib/integrations/zapi";
 import { dlocalConfigurado } from "@/lib/integrations/dlocal";
 import type { OrgRow } from "@/lib/database.types";
-import { OrgForm, ZapiForm } from "./configuracoes-client";
+import { OrgForm, ZapiForm, CambioForm } from "./configuracoes-client";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ export default async function ConfiguracoesPage() {
   const { data } = await supabase.from("orgs").select("*").limit(1).maybeSingle();
   const org = data as OrgRow | null;
 
-  const taxa = taxaBrlParaGs();
+  const taxa = taxaBrlParaGs(org?.taxa_cambio_brl_gs);
   const canWrite = can(profile, "configuracoes", "write");
 
   // Credenciais Z-API: banco tem precedência sobre env vars
@@ -62,13 +62,21 @@ export default async function ConfiguracoesPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><ArrowLeftRight className="size-4" /> Câmbio atual</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <ArrowLeftRight className="size-4" /> Câmbio Oficial da Manhã
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="font-display text-2xl font-semibold tabular-nums">1 BRL = {gs(taxa)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Taxa de conversão para Guarani usada em pagamentos em Pix/BRL.
-            </p>
+          <CardContent className="space-y-4">
+            <div>
+              <p className="font-display text-2xl font-semibold tabular-nums">1 BRL = {gs(taxa)}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Taxa de conversão para Guarani usada em pagamentos Pix/BRL e checkouts DLocal.
+              </p>
+            </div>
+            {org
+              ? <CambioForm orgId={org.id} taxa={org.taxa_cambio_brl_gs} canWrite={canWrite} />
+              : <p className="text-sm text-muted-foreground">Operação não encontrada.</p>
+            }
           </CardContent>
         </Card>
       </div>

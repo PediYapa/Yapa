@@ -36,6 +36,35 @@ export async function salvarOrg(_prev: ActionResult | undefined, formData: FormD
   });
 }
 
+const cambioSchema = z.object({
+  id: uuidLike,
+  taxa: z.coerce
+    .number()
+    .positive("A taxa deve ser maior que zero.")
+    .max(99999.9999, "Valor fora do intervalo esperado."),
+});
+
+export async function salvarCambio(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {
+  return runAction(async () => {
+    await guard("configuracoes", "write");
+    const parsed = cambioSchema.safeParse({
+      id: formData.get("id"),
+      taxa: formData.get("taxa"),
+    });
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+    }
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from("orgs")
+      .update({ taxa_cambio_brl_gs: parsed.data.taxa })
+      .eq("id", parsed.data.id);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath("/configuracoes");
+    return { ok: true };
+  });
+}
+
 const zapiSchema = z.object({
   id: uuidLike,
   zapi_instance: z.string().max(200),

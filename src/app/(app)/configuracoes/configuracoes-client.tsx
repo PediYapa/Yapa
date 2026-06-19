@@ -3,7 +3,7 @@
 import { useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { salvarOrg, salvarZapi } from "@/app/actions/configuracoes";
+import { salvarOrg, salvarZapi, salvarCambio } from "@/app/actions/configuracoes";
 import type { ActionResult } from "@/lib/auth/guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -133,6 +133,57 @@ export function ZapiForm({ data, canWrite }: { data: ZapiFormData; canWrite: boo
       {canWrite && (
         <div>
           <SubmitButton label="Salvar configuração Z-API" pendingLabel="Salvando…" />
+        </div>
+      )}
+    </form>
+  );
+}
+
+export function CambioForm({
+  orgId,
+  taxa,
+  canWrite,
+}: {
+  orgId: string;
+  taxa: number;
+  canWrite: boolean;
+}) {
+  const router = useRouter();
+  const [state, formAction] = useActionState<ActionResult | undefined, FormData>(salvarCambio, undefined);
+
+  useEffect(() => {
+    if (state?.ok) router.refresh();
+  }, [state, router]);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <input type="hidden" name="id" value={orgId} />
+
+      <div className="space-y-2">
+        <Label htmlFor="taxa">Taxa de Câmbio Oficial da Manhã (1 BRL = X GS)</Label>
+        <Input
+          id="taxa"
+          name="taxa"
+          type="number"
+          step="0.0001"
+          min="1"
+          defaultValue={taxa.toFixed(4)}
+          disabled={!canWrite}
+          className="max-w-xs tabular-nums"
+          placeholder="Ex.: 1350.0000"
+        />
+        <p className="text-xs text-muted-foreground">
+          Este valor será utilizado por todo o sistema para normalizar a precificação e os checkouts da DLocal.
+        </p>
+      </div>
+
+      {state && (state.ok
+        ? <p className="text-sm text-success">Câmbio atualizado com sucesso.</p>
+        : <p className="text-sm text-destructive">{state.error}</p>)}
+
+      {canWrite && (
+        <div>
+          <SubmitButton label="Salvar Câmbio" pendingLabel="Salvando…" />
         </div>
       )}
     </form>

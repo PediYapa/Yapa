@@ -30,6 +30,7 @@ export type OrgRow = {
   zapi_token: string | null;
   zapi_client_token: string | null;
   zapi_webhook_secret: string | null;
+  taxa_cambio_brl_gs: number;
   created_at: string;
 };
 
@@ -123,6 +124,8 @@ export type PedidoRow = {
   canal: string;
   moeda: Moeda;
   forma_pagamento: FormaPagamento | null;
+  gateway_id: string | null;
+  gateway_status: string;
   valor_total_gs: number;
   valor_origem: number | null;
   codigo_validacao: string | null;

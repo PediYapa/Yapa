@@ -23,6 +23,7 @@ create table if not exists yapa.orgs (
   zapi_token text,
   zapi_client_token text,
   zapi_webhook_secret text,
+  taxa_cambio_brl_gs  numeric(14,4) not null default 1350.0000,
   created_at timestamptz not null default now()
 );
 
@@ -155,6 +156,8 @@ create table if not exists yapa.pedidos (
   canal text not null default 'whatsapp',
   moeda yapa.moeda not null default 'GS',
   forma_pagamento yapa.forma_pagamento,
+  gateway_id varchar,                                -- id da transação no gateway (DLocal)
+  gateway_status varchar not null default 'pending', -- status da cobrança no gateway
   valor_total_gs numeric(14,2) not null default 0,  -- sempre normalizado em Guarani
   valor_origem numeric(14,2),                        -- valor na moeda de pagamento (ex.: BRL no Pix)
   codigo_validacao text,                             -- código de entrega informado ao cliente
@@ -169,6 +172,7 @@ create table if not exists yapa.pedidos (
 );
 create index if not exists idx_pedidos_org_status on yapa.pedidos(org_id, status) where deleted_at is null;
 create index if not exists idx_pedidos_cliente on yapa.pedidos(cliente_id) where deleted_at is null;
+create index if not exists idx_pedidos_gateway_id on yapa.pedidos(gateway_id) where gateway_id is not null;
 
 create table if not exists yapa.pedido_itens (
   id uuid primary key default gen_random_uuid(),
