@@ -19,7 +19,7 @@ export type FormaPagamento = "dlocal" | "pix" | "dinheiro";
 export type EntregaStatus = "aguardando" | "coletado" | "em_entrega" | "entregue" | "cancelada";
 export type PagamentoStatus = "pendente" | "pago" | "estornado" | "falha";
 export type ConversaStatus = "aberta" | "pendente" | "resolvida" | "arquivada";
-export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano";
+export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano" | "payment_dlocal" | "external_link" | "location_capture";
 
 export type OrgRow = {
   id: string;
@@ -219,6 +219,7 @@ export type FluxoNodeData = {
   imagem_url?: string;
   produto_id?: string;
   botoes?: FluxoBotao[];
+  link_url?: string;
 };
 
 export type FluxoNode = {

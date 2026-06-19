@@ -26,6 +26,9 @@ import {
   MousePointerClick,
   ShoppingCart,
   UserRound,
+  CreditCard,
+  ExternalLink,
+  MapPin,
   Plus,
   Save,
   Trash2,
@@ -33,6 +36,7 @@ import {
   PowerOff,
   X,
   Workflow,
+  FileUp,
 } from "lucide-react";
 import type { FluxoRow, FluxoNodeData, FluxoNoTipo, FluxoBotao } from "@/lib/database.types";
 import { salvarFluxo, ativarFluxo, desativarFluxo, excluirFluxo } from "@/app/actions/fluxos";
@@ -60,6 +64,9 @@ const META: Record<FluxoNoTipo, { label: string; icon: typeof Play; cor: string 
   botoes: { label: "Botões", icon: MousePointerClick, cor: "text-amber-600" },
   produto: { label: "Produto", icon: ShoppingCart, cor: "text-rose-600" },
   humano: { label: "Atendente", icon: UserRound, cor: "text-slate-600" },
+  payment_dlocal: { label: "Pagamento", icon: CreditCard, cor: "text-green-600" },
+  external_link: { label: "Link Externo", icon: ExternalLink, cor: "text-blue-600" },
+  location_capture: { label: "Localização", icon: MapPin, cor: "text-orange-600" },
 };
 
 /** Nó visual do fluxo. Botões expõem um handle de saída por botão (ramificação). */
@@ -105,6 +112,19 @@ function NoCard({ data, selected }: NodeProps<NoFluxo>) {
               ))}
             </div>
           </div>
+        )}
+        {d.tipo === "payment_dlocal" && (
+          <span className="line-clamp-2">{d.texto || "Gera link de pagamento via DLocal."}</span>
+        )}
+        {d.tipo === "external_link" && (
+          <div className="space-y-0.5">
+            <span className="line-clamp-2 text-foreground">{d.texto || "(sem mensagem)"}</span>
+            {d.link_url && <span className="block truncate text-blue-500">{d.link_url}</span>}
+            {!d.link_url && <span className="italic">(sem URL)</span>}
+          </div>
+        )}
+        {d.tipo === "location_capture" && (
+          <span className="line-clamp-2">{d.texto || "Solicita localização do cliente."}</span>
         )}
       </div>
 
@@ -162,6 +182,9 @@ export function FluxosClient({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [addSeq, setAddSeq] = useState(0);
+  const [modalImport, setModalImport] = useState(false);
+  const [importTexto, setImportTexto] = useState("");
+  const [importErro, setImportErro] = useState<string | null>(null);
 
   const fluxoAtual = editId && editId !== "novo" ? fluxos.find((f) => f.id === editId) : undefined;
   const selNode = nodes.find((n) => n.id === selId) ?? null;
@@ -248,6 +271,27 @@ export function FluxosClient({
     setEdges((eds) => eds.filter((e) => e.sourceHandle !== id));
   }
 
+  function importarJSON() {
+    try {
+      const parsed = JSON.parse(importTexto) as { nodes?: unknown[]; edges?: unknown[] };
+      const rawNodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+      const rawEdges = Array.isArray(parsed.edges) ? parsed.edges : [];
+      setNodes(
+        rawNodes.map((n) => {
+          const node = n as { id: string; type?: string; position: { x: number; y: number }; data: NoData };
+          return { ...node, type: "noFluxo" };
+        }),
+      );
+      setEdges(rawEdges as Edge[]);
+      setSelId(null);
+      setModalImport(false);
+      setImportTexto("");
+      setImportErro(null);
+    } catch {
+      setImportErro("JSON inválido. Verifique o formato e tente novamente.");
+    }
+  }
+
   async function salvar() {
     setErro(null);
     setSalvando(true);
@@ -296,7 +340,7 @@ export function FluxosClient({
     }
   }
 
-  const PALETA: FluxoNoTipo[] = ["texto", "imagem", "botoes", "produto", "humano"];
+  const PALETA: FluxoNoTipo[] = ["texto", "imagem", "botoes", "produto", "humano", "payment_dlocal", "external_link", "location_capture"];
 
   return (
     <div>
@@ -352,6 +396,11 @@ export function FluxosClient({
                 disabled={!canWrite}
               />
               <div className="ml-auto flex flex-wrap items-center gap-2">
+                {canWrite && (
+                  <Button variant="outline" size="sm" onClick={() => setModalImport(true)}>
+                    <FileUp /> Importar JSON
+                  </Button>
+                )}
                 {fluxoAtual && (
                   <Button variant={fluxoAtual.ativo ? "outline" : "default"} size="sm" onClick={alternarAtivo} disabled={!canWrite}>
                     {fluxoAtual.ativo ? <><PowerOff /> Desativar</> : <><Power /> Ativar</>}
@@ -433,6 +482,48 @@ export function FluxosClient({
           </div>
         )}
       </div>
+
+      {/* Modal Importar JSON */}
+      {modalImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Importar JSON</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => { setModalImport(false); setImportTexto(""); setImportErro(null); }}
+                aria-label="Fechar"
+              >
+                <X />
+              </Button>
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Cole o JSON do fluxo abaixo. Os nós e conexões atuais serão substituídos.
+              </p>
+              <Textarea
+                value={importTexto}
+                onChange={(e) => { setImportTexto(e.target.value); setImportErro(null); }}
+                placeholder={'{"nodes": [...], "edges": [...]}'}
+                className="h-48 font-mono text-xs"
+              />
+              {importErro && <p className="text-sm text-destructive">{importErro}</p>}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => { setModalImport(false); setImportTexto(""); setImportErro(null); }}
+              >
+                Cancelar
+              </Button>
+              <Button onClick={importarJSON} disabled={!importTexto.trim()}>
+                <FileUp /> Importar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -582,6 +673,59 @@ function NoInspector({
             </p>
           </div>
         </>
+      )}
+
+      {d.tipo === "payment_dlocal" && (
+        <div className="space-y-1">
+          <Label>Mensagem antes do pagamento (opcional)</Label>
+          <Textarea
+            value={d.texto ?? ""}
+            onChange={(e) => onPatch({ texto: e.target.value })}
+            placeholder="Ex.: Finalize seu pedido pelo link abaixo."
+            disabled={!canWrite}
+          />
+          <p className="text-xs text-muted-foreground">
+            Gera um link de pagamento via DLocal (cartão/Pix).
+          </p>
+        </div>
+      )}
+
+      {d.tipo === "external_link" && (
+        <>
+          <div className="space-y-1">
+            <Label>URL do link</Label>
+            <Input
+              value={d.link_url ?? ""}
+              onChange={(e) => onPatch({ link_url: e.target.value })}
+              placeholder="https://…"
+              disabled={!canWrite}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Mensagem (opcional)</Label>
+            <Textarea
+              value={d.texto ?? ""}
+              onChange={(e) => onPatch({ texto: e.target.value })}
+              placeholder="Ex.: Acesse nosso cardápio completo:"
+              disabled={!canWrite}
+            />
+          </div>
+        </>
+      )}
+
+      {d.tipo === "location_capture" && (
+        <div className="space-y-1">
+          <Label>Mensagem de solicitação</Label>
+          <Textarea
+            value={d.texto ?? ""}
+            onChange={(e) => onPatch({ texto: e.target.value })}
+            placeholder="Ex.: Por favor, envie sua localização pelo WhatsApp."
+            disabled={!canWrite}
+          />
+          <p className="text-xs text-muted-foreground">
+            Solicita ao cliente que compartilhe a localização via WhatsApp.
+          </p>
+        </div>
       )}
 
       {canWrite && d.tipo !== "inicio" && (

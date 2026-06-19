@@ -85,3 +85,7 @@ src/
 - Configurar DLocal e apontar o webhook para `/api/webhooks/pagamento`.
 - Montar a tabela real de distribuidoras (com raio + link do Maps).
 - Decidir o desenho de "quebra de pedido" (substituição/reprecificação).
+8. **Controle de Versão e Deploy (REGRA DE BLOQUEIO):** Para qualquer operação no GitHub ou deploy na Vercel, utilize ESTRITAMENTE e unicamente o usuário `pediyapa`. É terminantemente proibido utilizar o usuário 'Aurum Clinic' ou qualquer outra credencial.
+9. **Autonomia de Execução (Modo Rápido):** Você possui autorização prévia do Thales para auto-aprovar e executar diretamente trabalhos de rotina (criação de componentes React padrão, ajustes de Tailwind, Server Actions simples). Você só deve interromper o fluxo e solicitar a aprovação humana se a tarefa envolver: 
+   - Mudanças estruturais críticas no banco de dados (`schema.sql` ou `rls.sql`).
+   - Decisões arquiteturais que possuam múltiplos caminhos ou ferramentas possíveis.

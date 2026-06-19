@@ -39,3 +39,6 @@ yarn-error.log*
 # Dados legados de importação (PII — nunca versionar)
 db/import/
 scripts/legacy/*.csv
+
+.vercel
+.env*

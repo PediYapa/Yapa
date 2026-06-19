@@ -11,11 +11,12 @@ const nodeSchema = z.object({
   type: z.string().optional(),
   position: z.object({ x: z.number(), y: z.number() }),
   data: z.object({
-    tipo: z.enum(["inicio", "texto", "imagem", "botoes", "produto", "humano"]),
+    tipo: z.enum(["inicio", "texto", "imagem", "botoes", "produto", "humano", "payment_dlocal", "external_link", "location_capture"]),
     texto: z.string().max(2000).optional(),
     imagem_url: z.string().max(2000).optional(),
     produto_id: z.string().optional(),
     botoes: z.array(botaoSchema).max(3).optional(), // WhatsApp: até 3 botões de resposta
+    link_url: z.string().max(2000).optional(),
   }),
 });
 
