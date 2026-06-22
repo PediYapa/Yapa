@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { interpretarMensagem } from "@/lib/integrations/openai";
 import { enviarTexto, enviarImagem, enviarBotoes, type ZapiConfig } from "@/lib/integrations/zapi";
-import { executarFluxo, type ProdutoInfo } from "@/lib/intel/fluxo-engine";
-import type { ConversaMensagem, FluxoEstado } from "@/lib/database.types";
+import { executarFluxo, tipoEntidadeDoNo, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
+import { montarListaEntidade, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
+import type { ConversaMensagem, FluxoEstado, FluxoNode } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
 
@@ -92,7 +93,10 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (fluxo && (fluxo.nodes?.length ?? 0) > 0) {
-      // Resolve os produtos referenciados pelo fluxo (nome/preço/imagem do catálogo).
+      const getNode = (id: string): FluxoNode | undefined => fluxo.nodes.find((n) => n.id === id);
+
+      // Resolve os produtos de nós de PRODUTO ÚNICO (com produto_id) — nome/preço/imagem.
+      // Nós de catálogo (produto sem produto_id) são resolvidos dinamicamente mais abaixo.
       const produtoIds = fluxo.nodes
         .filter((n) => n.data?.tipo === "produto" && n.data.produto_id)
         .map((n) => n.data.produto_id as string);
@@ -107,39 +111,80 @@ export async function POST(request: Request) {
         );
       }
 
-      // Se a conversa estava noutro fluxo (ou em nenhum), começa do início.
+      // Estado só vale se for do mesmo fluxo ativo; senão recomeça do início.
       const estado =
         conversa?.fluxo_estado && conversa.fluxo_estado.fluxo_id === fluxo.id ? conversa.fluxo_estado : null;
 
-      const resultado = executarFluxo(
-        { nodes: fluxo.nodes, edges: fluxo.edges },
-        estado,
-        texto,
-        (id) => produtosMap.get(id),
-      );
-
-      for (const envio of resultado.envios) {
+      // Envia uma lista dinâmica de entidade (com fallback amigável se o banco falhar)
+      // e registra a resposta no histórico da conversa.
+      const enviarLista = async (no: FluxoNode, ent: EntidadeTipo): Promise<void> => {
+        const lista = await montarListaEntidade(admin, orgId, no, ent);
+        const msg = lista ?? FALLBACK_ENTIDADE;
         try {
-          if (envio.tipo === "texto") await enviarTexto(phone, envio.texto, zapiCfg);
-          else if (envio.tipo === "imagem") await enviarImagem(phone, envio.imagem_url, envio.caption, zapiCfg);
-          else await enviarBotoes(phone, envio.texto, envio.botoes, zapiCfg);
+          await enviarTexto(phone, msg, zapiCfg);
         } catch {
           /* não-bloqueante */
         }
-        const textoLog =
-          envio.tipo === "texto"
-            ? envio.texto
-            : envio.tipo === "imagem"
-              ? `[imagem] ${envio.caption ?? envio.imagem_url}`
-              : `${envio.texto} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
-        novasMensagens.push({ de: "bot", texto: textoLog, tipo: envio.tipo, em: agora });
+        novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+      };
+
+      // (A) Já estávamos pausados num nó de entidade? Esta mensagem é a SELEÇÃO numérica.
+      //     Se não vier um número válido, reapresenta a lista e segue aguardando (não avança).
+      const noEspera = estado?.no_atual ? getNode(estado.no_atual) : undefined;
+      const entEspera = noEspera ? tipoEntidadeDoNo(noEspera) : null;
+      const escolha = Number.parseInt(texto.trim(), 10);
+      const selecaoValida = Number.isInteger(escolha) && escolha >= 1;
+
+      if (entEspera && noEspera && !selecaoValida) {
+        await enviarLista(noEspera, entEspera);
+        respondeuPorFluxo = true;
+        fluxoEstado = { fluxo_id: fluxo.id, no_atual: noEspera.id, atualizado_em: agora };
+      } else {
+        // (B) Navegação normal pelo engine (puro). Uma seleção válida num nó de entidade
+        //     faz o engine avançar pela aresta padrão a partir dele.
+        const resultado = executarFluxo(
+          { nodes: fluxo.nodes, edges: fluxo.edges },
+          estado,
+          texto,
+          (id) => produtosMap.get(id),
+        );
+
+        for (const envio of resultado.envios) {
+          try {
+            if (envio.tipo === "texto") await enviarTexto(phone, envio.texto, zapiCfg);
+            else if (envio.tipo === "imagem") await enviarImagem(phone, envio.imagem_url, envio.caption, zapiCfg);
+            else await enviarBotoes(phone, envio.texto, envio.botoes, zapiCfg);
+          } catch {
+            /* não-bloqueante */
+          }
+          const textoLog =
+            envio.tipo === "texto"
+              ? envio.texto
+              : envio.tipo === "imagem"
+                ? `[imagem] ${envio.caption ?? envio.imagem_url}`
+                : `${envio.texto} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
+          novasMensagens.push({ de: "bot", texto: textoLog, tipo: envio.tipo, em: agora });
+        }
+
+        respondeuPorFluxo = resultado.envios.length > 0;
+        acionarHandoff = resultado.handoff;
+        fluxoEstado = resultado.no_atual
+          ? { fluxo_id: fluxo.id, no_atual: resultado.no_atual, atualizado_em: agora }
+          : null;
+
+        // (C) Roteamento por tipo de nó: o engine pausou num nó de entidade
+        //     (produto-catálogo / hub / entregador)? Consulta o banco, envia a lista
+        //     numerada e mantém o estado nesse nó, aguardando a seleção numérica.
+        if (resultado.no_atual) {
+          const no = getNode(resultado.no_atual);
+          const ent = no ? tipoEntidadeDoNo(no) : null;
+          if (no && ent) {
+            await enviarLista(no, ent);
+            respondeuPorFluxo = true;
+          }
+        }
       }
 
-      respondeuPorFluxo = resultado.envios.length > 0;
-      acionarHandoff = resultado.handoff;
-      fluxoEstado = resultado.no_atual
-        ? { fluxo_id: fluxo.id, no_atual: resultado.no_atual, atualizado_em: agora }
-        : null;
       if (respondeuPorFluxo) intencaoLabel = "fluxo";
     }
   }

@@ -28,6 +28,25 @@ export type ResultadoFluxo = {
   handoff: boolean;
 };
 
+/** Tipo de entidade resolvida dinamicamente no banco (lista numerada no WhatsApp). */
+export type EntidadeTipo = "produto" | "hub" | "entregador";
+
+/**
+ * Um nó é "de entidade" quando seu conteúdo vem do banco em tempo real:
+ *  - "produto" SEM produto_id → catálogo (lista). COM produto_id → produto único (engine renderiza).
+ *  - "hub"/"distribuidora" → lista de distribuidoras.
+ *  - "entregador" → lista de entregadores.
+ * Estes nós PAUSAM o fluxo; quem consulta o banco e renderiza a lista é o webhook.
+ * (Pura: o engine não toca no banco — só classifica o nó.)
+ */
+export function tipoEntidadeDoNo(node: FluxoNode): EntidadeTipo | null {
+  const tipo = node.data.tipo as string; // pode vir "hub"/"entregador" via JSON importado
+  if (tipo === "produto") return node.data.produto_id ? null : "produto";
+  if (tipo === "hub" || tipo === "distribuidora") return "hub";
+  if (tipo === "entregador") return "entregador";
+  return null;
+}
+
 function normalizar(s: string): string {
   return s
     .trim()
@@ -103,6 +122,12 @@ export function executarFluxo(
   while (atual && !visitados.has(atual.id)) {
     visitados.add(atual.id);
     const d = atual.data;
+
+    // Nó de entidade (produto-catálogo/hub/entregador): pausa aqui. O conteúdo é
+    // dinâmico (vem do banco), então o webhook consulta e envia a lista numerada.
+    if (tipoEntidadeDoNo(atual)) {
+      return { envios, no_atual: atual.id, handoff };
+    }
 
     if (d.tipo === "botoes") {
       envios.push({
