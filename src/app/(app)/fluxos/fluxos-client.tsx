@@ -149,6 +149,9 @@ function NoCard({ data, selected }: NodeProps<NoFluxo>) {
 
 const nodeTypes = { noFluxo: NoCard };
 
+/** Conjunto de tipos válidos derivado do META — único ponto de verdade. */
+const TIPOS_VALIDOS = new Set(Object.keys(META));
+
 function novoNo(tipo: FluxoNoTipo, i: number): NoFluxo {
   const data: FluxoNodeData =
     tipo === "botoes"
@@ -276,13 +279,75 @@ export function FluxosClient({
       const parsed = JSON.parse(importTexto) as { nodes?: unknown[]; edges?: unknown[] };
       const rawNodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
       const rawEdges = Array.isArray(parsed.edges) ? parsed.edges : [];
-      setNodes(
-        rawNodes.map((n) => {
-          const node = n as { id: string; type?: string; position: { x: number; y: number }; data: NoData };
-          return { ...node, type: "noFluxo" };
-        }),
-      );
-      setEdges(rawEdges as Edge[]);
+
+      // Sanitiza cada nó: valida tipo, remove nulls, limpa botões, garante position numérica.
+      const nosLimpos: NoFluxo[] = rawNodes.flatMap((raw) => {
+        if (!raw || typeof raw !== "object") return [];
+        const n = raw as Record<string, unknown>;
+
+        const pos = (n.position ?? {}) as Record<string, unknown>;
+        const position = {
+          x: typeof pos.x === "number" && isFinite(pos.x) ? pos.x : 0,
+          y: typeof pos.y === "number" && isFinite(pos.y) ? pos.y : 0,
+        };
+
+        const rawData = (typeof n.data === "object" && n.data ? n.data : {}) as Record<string, unknown>;
+        if (!TIPOS_VALIDOS.has(rawData.tipo as string)) return []; // tipo desconhecido → descarta
+
+        const tipo = rawData.tipo as FluxoNoTipo;
+
+        const botoes = Array.isArray(rawData.botoes)
+          ? (rawData.botoes as unknown[])
+              .filter((b): b is { id: string; label: string } =>
+                !!b && typeof b === "object" &&
+                typeof (b as Record<string, unknown>).id === "string" &&
+                ((b as Record<string, unknown>).id as string).trim().length > 0 &&
+                typeof (b as Record<string, unknown>).label === "string" &&
+                ((b as Record<string, unknown>).label as string).trim().length > 0)
+              .slice(0, 3)
+              .map((b) => ({ id: b.id.trim(), label: b.label.trim() }))
+          : undefined;
+
+        // Apenas campos string não-nulos chegam ao Zod — null é o maior culpado de falhas.
+        const data: FluxoNodeData = {
+          tipo,
+          ...(typeof rawData.texto === "string" ? { texto: rawData.texto } : {}),
+          ...(typeof rawData.imagem_url === "string" ? { imagem_url: rawData.imagem_url } : {}),
+          ...(typeof rawData.produto_id === "string" ? { produto_id: rawData.produto_id } : {}),
+          ...(typeof rawData.link_url === "string" ? { link_url: rawData.link_url } : {}),
+          ...(botoes !== undefined ? { botoes } : {}),
+        };
+
+        return [{
+          id: typeof n.id === "string" && n.id.trim() ? n.id.trim() : crypto.randomUUID(),
+          type: "noFluxo" as const,
+          position,
+          data: data as NoData,
+        }];
+      });
+
+      const arestasLimpas: Edge[] = rawEdges.flatMap((raw) => {
+        if (!raw || typeof raw !== "object") return [];
+        const e = raw as Record<string, unknown>;
+        const source = typeof e.source === "string" ? e.source.trim() : "";
+        const target = typeof e.target === "string" ? e.target.trim() : "";
+        if (!source || !target) return [];
+        return [{
+          id: typeof e.id === "string" && e.id.trim() ? e.id.trim() : crypto.randomUUID(),
+          source,
+          target,
+          sourceHandle: typeof e.sourceHandle === "string" ? e.sourceHandle : undefined,
+          targetHandle: typeof e.targetHandle === "string" ? e.targetHandle : undefined,
+        }];
+      });
+
+      if (nosLimpos.length === 0) {
+        setImportErro("Nenhum nó válido encontrado. Verifique se 'nodes' contém tipos reconhecidos.");
+        return;
+      }
+
+      setNodes(nosLimpos);
+      setEdges(arestasLimpas);
       setSelId(null);
       setModalImport(false);
       setImportTexto("");

@@ -40,7 +40,12 @@ export type SalvarFluxoInput = z.input<typeof salvarSchema>;
 export async function salvarFluxo(input: SalvarFluxoInput): Promise<ActionResult> {
   return runAction(async () => {
     const { supabase, profile } = await guard("fluxos", "write");
-    const data = salvarSchema.parse(input);
+    const result = salvarSchema.safeParse(input);
+    if (!result.success) {
+      const msg = result.error.issues[0]?.message ?? "Dados do fluxo inválidos.";
+      return { ok: false, error: msg };
+    }
+    const data = result.data;
     const payload = { nome: data.nome, nodes: data.nodes, edges: data.edges };
 
     if (data.id) {
