@@ -145,7 +145,7 @@ export function CambioForm({
   canWrite,
 }: {
   orgId: string;
-  taxa: number;
+  taxa: number | null | undefined; // undefined = coluna ainda não migrada no banco
   canWrite: boolean;
 }) {
   const router = useRouter();
@@ -167,7 +167,7 @@ export function CambioForm({
           type="number"
           step="0.0001"
           min="1"
-          defaultValue={taxa.toFixed(4)}
+          defaultValue={(taxa ?? 1350).toFixed(4)}
           disabled={!canWrite}
           className="max-w-xs tabular-nums"
           placeholder="Ex.: 1350.0000"

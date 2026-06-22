@@ -74,7 +74,7 @@ export default async function ConfiguracoesPage() {
               </p>
             </div>
             {org
-              ? <CambioForm orgId={org.id} taxa={org.taxa_cambio_brl_gs} canWrite={canWrite} />
+              ? <CambioForm orgId={org.id} taxa={org.taxa_cambio_brl_gs ?? taxa} canWrite={canWrite} />
               : <p className="text-sm text-muted-foreground">Operação não encontrada.</p>
             }
           </CardContent>
