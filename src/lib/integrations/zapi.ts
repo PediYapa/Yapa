@@ -84,6 +84,24 @@ export function enviarBotoes(
   }, cfg);
 }
 
+/**
+ * Envia uma enquete nativa do WhatsApp — máx. 12 opções, seleção única.
+ * O voto chega de volta como webhook `type: "PollUpdate"`.
+ */
+export function enviarPoll(
+  phone: string,
+  titulo: string,
+  opcoes: string[],
+  cfg?: ZapiConfig | null,
+) {
+  return post("send-poll", {
+    phone: phone.replace(/\D/g, ""),
+    name: titulo,
+    values: opcoes,
+    selectableCount: 1,
+  }, cfg);
+}
+
 /** Envia link de pagamento (texto com URL) ao cliente. */
 export function enviarLinkPagamento(phone: string, url: string, valorFmt: string, cfg?: ZapiConfig | null) {
   return enviarTexto(

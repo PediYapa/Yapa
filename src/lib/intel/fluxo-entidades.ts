@@ -3,14 +3,16 @@ import "server-only";
 /**
  * Resolução dinâmica de nós de entidade do fluxo (produto/hub/entregador).
  *
- * O engine (puro) apenas classifica e pausa nesses nós; aqui consultamos o
- * Supabase em tempo real e montamos a lista numerada enviada ao WhatsApp.
+ * O engine (puro) pausa nesses nós; aqui consultamos o Supabase e construímos
+ * o envio rico adequado para a quantidade de opções:
  *
- * Mapeamento de colunas (schema real → enunciado):
- *  - produtos:      filtra `disponivel = true` (não existe coluna `em_estoque`).
- *  - distribuidoras (hub): filtra `ativo = true`.
- *  - entregadores:  filtra `ativo = true`.
- * Todas respeitam soft-delete (`deleted_at is null`) e isolamento por `org_id`.
+ *   0 itens  → texto "nenhum disponível"
+ *   1–3      → Interactive Buttons (clicáveis, sem digitar)
+ *   4–12     → Enquete/Poll nativa do WhatsApp
+ *   13+      → lista numerada em texto (fallback raramente atingido)
+ *
+ * A resposta do usuário (clique no botão ou voto na enquete) chega no webhook
+ * com type "ButtonsResponse" ou "PollUpdate" — o route.ts extrai o texto selecionado.
  */
 import { gs } from "@/lib/format";
 import type { createAdminClient } from "@/lib/supabase/admin";
@@ -19,34 +21,68 @@ import type { EntidadeTipo } from "@/lib/intel/fluxo-engine";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
-/** Mensagem amigável quando a consulta ao banco falha (não quebra o bot). */
+/** Mensagem amigável quando o Supabase falha — não quebra o bot. */
 export const FALLBACK_ENTIDADE =
   "Ops! Não consegui carregar as opções agora. Pode tentar de novo em instantes? 🙏";
 
-/** Prefixo numerado para WhatsApp: 1️⃣…🔟 e, daí em diante, "11.". */
+/**
+ * Discriminador do envio de entidade.
+ * O webhook usa o campo `modo` para chamar a função Z-API correta.
+ */
+export type EnvioEntidade =
+  | { modo: "texto";  mensagem: string }
+  | { modo: "botoes"; titulo: string; botoes: { id: string; label: string }[] }
+  | { modo: "poll";   titulo: string; opcoes: string[] };
+
+const LIMITE_BOTOES = 3;  // WhatsApp: máx. 3 botões interativos
+const LIMITE_POLL   = 12; // WhatsApp: máx. 12 opções em enquete
+
 function prefixo(i: number): string {
   const emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
   return i < emojis.length ? emojis[i] : `${i + 1}.`;
 }
 
-/** Junta o cabeçalho (texto do nó, se houver) com a lista numerada. */
-function montarTexto(node: FluxoNode, linhas: string[], vazio: string): string {
-  const cabecalho = node.data.texto?.trim();
-  const corpo =
-    linhas.length === 0 ? vazio : linhas.map((l, i) => `${prefixo(i)} ${l}`).join("\n");
-  return cabecalho ? `${cabecalho}\n\n${corpo}` : corpo;
+function titulo(node: FluxoNode, fallback: string): string {
+  return node.data.texto?.trim() || fallback;
+}
+
+/** Escolhe o modo de envio pela quantidade de opções. */
+function resolverModo(
+  node: FluxoNode,
+  labels: string[],
+  fallbackTitulo: string,
+  mensagemVazio: string,
+): EnvioEntidade {
+  const t = titulo(node, fallbackTitulo);
+
+  if (labels.length === 0) {
+    return { modo: "texto", mensagem: mensagemVazio };
+  }
+  if (labels.length <= LIMITE_BOTOES) {
+    return {
+      modo: "botoes",
+      titulo: t,
+      botoes: labels.map((label, i) => ({ id: `ent_${i}`, label })),
+    };
+  }
+  if (labels.length <= LIMITE_POLL) {
+    return { modo: "poll", titulo: t, opcoes: labels };
+  }
+  // 13+ itens: fallback texto numerado
+  const corpo = labels.map((l, i) => `${prefixo(i)} ${l}`).join("\n");
+  return { modo: "texto", mensagem: `${t}\n\n${corpo}` };
 }
 
 /**
- * Consulta o banco conforme o tipo de entidade e devolve a lista numerada.
- * Retorna `null` em qualquer falha (o webhook então envia o FALLBACK_ENTIDADE).
+ * Consulta o banco conforme o tipo de entidade e devolve o envio estruturado.
+ * Retorna `null` em qualquer falha — o webhook então usa FALLBACK_ENTIDADE.
  */
 export async function montarListaEntidade(
   admin: AdminClient,
   orgId: string,
   node: FluxoNode,
   tipo: EntidadeTipo,
-): Promise<string | null> {
+): Promise<EnvioEntidade | null> {
   try {
     switch (tipo) {
       case "produto": {
@@ -58,8 +94,8 @@ export async function montarListaEntidade(
           .is("deleted_at", null)
           .order("nome");
         if (error) return null;
-        const linhas = (data ?? []).map((p) => `${p.nome} - ${gs(p.preco_gs)}`);
-        return montarTexto(node, linhas, "Nenhum produto disponível no momento.");
+        const labels = (data ?? []).map((p) => `${p.nome} - ${gs(p.preco_gs)}`);
+        return resolverModo(node, labels, "O que você quer pedir?", "Nenhum produto disponível no momento.");
       }
       case "hub": {
         const { data, error } = await admin
@@ -70,8 +106,10 @@ export async function montarListaEntidade(
           .is("deleted_at", null)
           .order("nome");
         if (error) return null;
-        const linhas = (data ?? []).map((d) => (d.endereco ? `${d.nome} - ${d.endereco}` : d.nome));
-        return montarTexto(node, linhas, "Nenhum hub disponível no momento.");
+        const labels = (data ?? []).map(
+          (d) => (d.endereco ? `${d.nome} - ${d.endereco}` : d.nome),
+        );
+        return resolverModo(node, labels, "Qual unidade você prefere?", "Nenhum hub disponível no momento.");
       }
       case "entregador": {
         const { data, error } = await admin
@@ -82,11 +120,10 @@ export async function montarListaEntidade(
           .is("deleted_at", null)
           .order("nome");
         if (error) return null;
-        const linhas = (data ?? []).map((e) => e.nome);
-        return montarTexto(node, linhas, "Nenhum entregador disponível no momento.");
+        const labels = (data ?? []).map((e) => e.nome);
+        return resolverModo(node, labels, "Qual entregador?", "Nenhum entregador disponível no momento.");
       }
     }
-    return null;
   } catch {
     return null;
   }

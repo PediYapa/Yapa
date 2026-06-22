@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { interpretarMensagem } from "@/lib/integrations/openai";
-import { enviarTexto, enviarImagem, enviarBotoes, type ZapiConfig } from "@/lib/integrations/zapi";
+import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } from "@/lib/integrations/zapi";
 import { executarFluxo, tipoEntidadeDoNo, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
 import { montarListaEntidade, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
 import type { ConversaMensagem, FluxoEstado, FluxoNode } from "@/lib/database.types";
@@ -30,11 +30,39 @@ export async function POST(request: Request) {
   if (body.fromMe === true) return NextResponse.json({ ok: true, ignored: "fromMe" });
 
   const phone = String(body.phone || body.from || "").replace(/\D/g, "");
-  const texto =
-    (typeof body.text === "object" && body.text
-      ? String((body.text as Record<string, unknown>).message || "")
-      : String(body.message || body.text || "")) || "";
   if (!phone) return NextResponse.json({ error: "telefone ausente" }, { status: 400 });
+
+  // Extrai o texto efetivo e detecta respostas interativas (clique em botão ou voto em enquete).
+  // Ambos os casos são tratados como entrada válida sem precisar de número digitado.
+  const tipoMsg = String(body.type || "").toLowerCase();
+  let texto = "";
+  let respostaInterativa = false;
+
+  if (tipoMsg === "buttonsresponse") {
+    // Usuário clicou num botão interativo (send-button-list).
+    const br = body.buttonsResponseMessage as Record<string, unknown> | undefined;
+    texto = String(br?.selectedDisplayText ?? br?.selectedButtonId ?? "");
+    respostaInterativa = texto.length > 0;
+  } else if (tipoMsg === "pollupdate") {
+    // Usuário votou numa enquete (send-poll). Z-API devolve os votos em `votes` ou `values`.
+    const pu = body.pollUpdateMessage as Record<string, unknown> | undefined;
+    const votes =
+      ((pu?.votes ?? pu?.values) as Array<Record<string, unknown>> | undefined) ?? [];
+    // Pega a primeira opção que tenha pelo menos um voto (evita desvotes / recuo).
+    const votado = votes.find((v) => {
+      const nome = v.name ?? v.optionName;
+      const votantes = v.voterNames ?? v.voters;
+      return nome != null && (votantes == null || (Array.isArray(votantes) && votantes.length > 0));
+    });
+    texto = String(votado?.name ?? votado?.optionName ?? "");
+    respostaInterativa = texto.length > 0;
+  } else {
+    // Mensagem de texto comum.
+    texto =
+      (typeof body.text === "object" && body.text
+        ? String((body.text as Record<string, unknown>).message || "")
+        : String(body.message || body.text || "")) || "";
+  }
 
   const admin = createAdminClient();
 
@@ -115,25 +143,42 @@ export async function POST(request: Request) {
       const estado =
         conversa?.fluxo_estado && conversa.fluxo_estado.fluxo_id === fluxo.id ? conversa.fluxo_estado : null;
 
-      // Envia uma lista dinâmica de entidade (com fallback amigável se o banco falhar)
-      // e registra a resposta no histórico da conversa.
+      // Envia a lista de entidade no formato rico adequado (botões / enquete / texto)
+      // e registra no histórico. Fallback amigável se o Supabase ou Z-API falhar.
       const enviarLista = async (no: FluxoNode, ent: EntidadeTipo): Promise<void> => {
-        const lista = await montarListaEntidade(admin, orgId, no, ent);
-        const msg = lista ?? FALLBACK_ENTIDADE;
+        const envio = await montarListaEntidade(admin, orgId, no, ent);
+        let msgLog: string;
         try {
-          await enviarTexto(phone, msg, zapiCfg);
+          if (!envio) {
+            await enviarTexto(phone, FALLBACK_ENTIDADE, zapiCfg);
+            msgLog = FALLBACK_ENTIDADE;
+          } else if (envio.modo === "texto") {
+            await enviarTexto(phone, envio.mensagem, zapiCfg);
+            msgLog = envio.mensagem;
+          } else if (envio.modo === "botoes") {
+            await enviarBotoes(phone, envio.titulo, envio.botoes, zapiCfg);
+            msgLog = `[botões] ${envio.titulo} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
+          } else {
+            // poll
+            await enviarPoll(phone, envio.titulo, envio.opcoes, zapiCfg);
+            msgLog = `[enquete] ${envio.titulo} [${envio.opcoes.join(" | ")}]`;
+          }
         } catch {
-          /* não-bloqueante */
+          // Qualquer falha de envio → texto de fallback, não-bloqueante
+          try { await enviarTexto(phone, FALLBACK_ENTIDADE, zapiCfg); } catch { /* noop */ }
+          msgLog = FALLBACK_ENTIDADE;
         }
-        novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+        novasMensagens.push({ de: "bot", texto: msgLog, tipo: "texto", em: agora });
       };
 
-      // (A) Já estávamos pausados num nó de entidade? Esta mensagem é a SELEÇÃO numérica.
-      //     Se não vier um número válido, reapresenta a lista e segue aguardando (não avança).
+      // (A) Já estávamos pausados num nó de entidade?
+      //     • Resposta interativa (botão/poll) → sempre válida, avança o fluxo.
+      //     • Número digitado → válido, avança.
+      //     • Texto livre → inválido, reapresenta a lista e aguarda.
       const noEspera = estado?.no_atual ? getNode(estado.no_atual) : undefined;
       const entEspera = noEspera ? tipoEntidadeDoNo(noEspera) : null;
       const escolha = Number.parseInt(texto.trim(), 10);
-      const selecaoValida = Number.isInteger(escolha) && escolha >= 1;
+      const selecaoValida = respostaInterativa || (Number.isInteger(escolha) && escolha >= 1);
 
       if (entEspera && noEspera && !selecaoValida) {
         await enviarLista(noEspera, entEspera);
