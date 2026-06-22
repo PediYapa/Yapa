@@ -328,6 +328,20 @@ create table if not exists yapa.gps_pings (
 -- Grants — sem isso os roles anon/authenticated não acessam o schema via PostgREST
 grant usage on schema yapa to anon, authenticated, service_role;
 grant all on all tables    in schema yapa to anon, authenticated, service_role;
+-- ---------------------------------------------------------------------------
+-- Contatos (formulário público da landing page)
+-- ---------------------------------------------------------------------------
+create table if not exists yapa.contatos (
+  id       uuid primary key default gen_random_uuid(),
+  nome     varchar(120) not null,
+  email    varchar(200) not null,
+  mensagem text not null,
+  created_at timestamptz not null default now()
+);
+alter table yapa.contatos enable row level security;
+create policy "contatos_insert_anon" on yapa.contatos for insert with check (true);
+
+-- ---------------------------------------------------------------------------
 grant all on all sequences in schema yapa to anon, authenticated, service_role;
 grant execute on all functions in schema yapa to anon, authenticated, service_role;
 

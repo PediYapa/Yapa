@@ -31,7 +31,7 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const publicPaths = ["/login", "/recuperar-senha", "/auth/callback"];
+  const publicPaths = ["/login", "/recuperar-senha", "/auth/callback", "/", "/terminos", "/privacidad", "/reembolsos"];
   const isPublic = publicPaths.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   // Não logado

@@ -266,6 +266,14 @@ export type ApiTokenRow = {
   created_at: string;
 };
 
+export type ContatoRow = {
+  id: string;
+  nome: string;
+  email: string;
+  mensagem: string;
+  created_at: string;
+};
+
 type TableShape<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -289,6 +297,7 @@ export type Database = {
       conversas: TableShape<ConversaRow>;
       api_tokens: TableShape<ApiTokenRow>;
       fluxos: TableShape<FluxoRow>;
+      contatos: TableShape<ContatoRow>;
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };
