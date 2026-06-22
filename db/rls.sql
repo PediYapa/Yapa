@@ -67,7 +67,8 @@ declare t text;
 begin
   foreach t in array array[
     'clientes','distribuidoras','produtos','entregadores','pedidos',
-    'pedido_itens','entregas','pagamentos','conversas','fluxos','hubs','rotas','gps_pings'
+    'pedido_itens','entregas','pagamentos','conversas','fluxos','hubs','rotas','gps_pings',
+    'sessoes_whatsapp'
   ] loop
     execute format('drop policy if exists "%1$s_all_same_org" on yapa.%1$s;', t);
     execute format(

@@ -3,8 +3,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { interpretarMensagem } from "@/lib/integrations/openai";
 import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } from "@/lib/integrations/zapi";
 import { executarFluxo, tipoEntidadeDoNo, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
-import { montarListaEntidade, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
-import type { ConversaMensagem, FluxoEstado, FluxoNode } from "@/lib/database.types";
+import { montarListaEntidade, resolverSelecaoProduto, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
+import { recuperarOuCriarSessao, salvarSessao } from "@/lib/intel/sessao-whatsapp";
+import type { ConversaMensagem, FluxoEstado, FluxoNode, CarrinhoItem } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +123,13 @@ export async function POST(request: Request) {
 
     if (fluxo && (fluxo.nodes?.length ?? 0) > 0) {
       const getNode = (id: string): FluxoNode | undefined => fluxo.nodes.find((n) => n.id === id);
+      const inicioNode = fluxo.nodes.find((n) => n.data?.tipo === "inicio");
+
+      // 1) RECUPERAÇÃO DE ESTADO: sessão do bot (posição + carrinho) por telefone.
+      //    Se não existir, nasce no nó inicial. Falha de banco → sessão null e o
+      //    fluxo segue respondendo, apenas sem persistir (degradação suave).
+      const sessao = await recuperarOuCriarSessao(admin, orgId, phone, inicioNode?.id ?? null);
+      const carrinho: CarrinhoItem[] = sessao?.carrinho ? [...sessao.carrinho] : [];
 
       // Resolve os produtos de nós de PRODUTO ÚNICO (com produto_id) — nome/preço/imagem.
       // Nós de catálogo (produto sem produto_id) são resolvidos dinamicamente mais abaixo.
@@ -139,9 +147,12 @@ export async function POST(request: Request) {
         );
       }
 
-      // Estado só vale se for do mesmo fluxo ativo; senão recomeça do início.
-      const estado =
-        conversa?.fluxo_estado && conversa.fluxo_estado.fluxo_id === fluxo.id ? conversa.fluxo_estado : null;
+      // Posição autoritativa = sessão (validada contra o fluxo ativo atual).
+      // Nó inexistente/ausente → null → recomeça do início (dispara boas-vindas).
+      const estado: FluxoEstado | null =
+        sessao?.no_atual_id && getNode(sessao.no_atual_id)
+          ? { fluxo_id: fluxo.id, no_atual: sessao.no_atual_id, atualizado_em: agora }
+          : null;
 
       // Envia a lista de entidade no formato rico adequado (botões / enquete / texto)
       // e registra no histórico. Fallback amigável se o Supabase ou Z-API falhar.
@@ -171,6 +182,8 @@ export async function POST(request: Request) {
         novasMensagens.push({ de: "bot", texto: msgLog, tipo: "texto", em: agora });
       };
 
+      let novoNoAtual: string | null = estado?.no_atual ?? null;
+
       // (A) Já estávamos pausados num nó de entidade?
       //     • Resposta interativa (botão/poll) → sempre válida, avança o fluxo.
       //     • Número digitado → válido, avança.
@@ -183,10 +196,17 @@ export async function POST(request: Request) {
       if (entEspera && noEspera && !selecaoValida) {
         await enviarLista(noEspera, entEspera);
         respondeuPorFluxo = true;
-        fluxoEstado = { fluxo_id: fluxo.id, no_atual: noEspera.id, atualizado_em: agora };
+        novoNoAtual = noEspera.id;
       } else {
-        // (B) Navegação normal pelo engine (puro). Uma seleção válida num nó de entidade
-        //     faz o engine avançar pela aresta padrão a partir dele.
+        // (B) GRAVAÇÃO DO CLIQUE NO CARRINHO: seleção válida num nó de PRODUTO →
+        //     recupera o produto real (id + preço) e empurra { produto_id, quantidade, preco }.
+        if (entEspera === "produto" && noEspera && selecaoValida) {
+          const indice = respostaInterativa ? null : Number.isInteger(escolha) ? escolha : null;
+          const item = await resolverSelecaoProduto(admin, orgId, { texto, indice });
+          if (item) carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco });
+        }
+
+        // (C) AVANÇO DE NÓ: o engine puro avança a partir do nó atual e emite o conteúdo.
         const resultado = executarFluxo(
           { nodes: fluxo.nodes, edges: fluxo.edges },
           estado,
@@ -213,13 +233,10 @@ export async function POST(request: Request) {
 
         respondeuPorFluxo = resultado.envios.length > 0;
         acionarHandoff = resultado.handoff;
-        fluxoEstado = resultado.no_atual
-          ? { fluxo_id: fluxo.id, no_atual: resultado.no_atual, atualizado_em: agora }
-          : null;
+        novoNoAtual = resultado.no_atual;
 
-        // (C) Roteamento por tipo de nó: o engine pausou num nó de entidade
-        //     (produto-catálogo / hub / entregador)? Consulta o banco, envia a lista
-        //     numerada e mantém o estado nesse nó, aguardando a seleção numérica.
+        // (D) Pausou num nó de entidade (produto-catálogo / hub / entregador)? Consulta
+        //     o banco, envia a lista clicável e mantém o estado nesse nó (aguarda seleção).
         if (resultado.no_atual) {
           const no = getNode(resultado.no_atual);
           const ent = no ? tipoEntidadeDoNo(no) : null;
@@ -228,7 +245,17 @@ export async function POST(request: Request) {
             respondeuPorFluxo = true;
           }
         }
+
+        // (E) CICLO DE FECHAMENTO: fluxo chegou ao fim (nó de conclusão) → zera o
+        //     carrinho para que a próxima interação comece um atendimento do zero.
+        if (resultado.no_atual === null) carrinho.length = 0;
       }
+
+      // Espelha a posição na conversa (inbox de atendimento) e PERSISTE a sessão do bot.
+      fluxoEstado = novoNoAtual
+        ? { fluxo_id: fluxo.id, no_atual: novoNoAtual, atualizado_em: agora }
+        : null;
+      if (sessao) await salvarSessao(admin, sessao.id, { no_atual_id: novoNoAtual, carrinho });
 
       if (respondeuPorFluxo) intencaoLabel = "fluxo";
     }

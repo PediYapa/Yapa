@@ -274,6 +274,20 @@ export type ContatoRow = {
   created_at: string;
 };
 
+/** Item do carrinho do bot (snapshot de preço no momento do clique). */
+export type CarrinhoItem = { produto_id: string; quantidade: number; preco: number };
+
+/** Sessão do bot no WhatsApp: posição no fluxo + carrinho, por telefone. */
+export type SessaoWhatsappRow = {
+  id: string;
+  org_id: string;
+  telefone: string;
+  no_atual_id: string | null;
+  carrinho: CarrinhoItem[];
+  created_at: string;
+  updated_at: string;
+};
+
 type TableShape<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -298,6 +312,7 @@ export type Database = {
       api_tokens: TableShape<ApiTokenRow>;
       fluxos: TableShape<FluxoRow>;
       contatos: TableShape<ContatoRow>;
+      sessoes_whatsapp: TableShape<SessaoWhatsappRow>;
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };

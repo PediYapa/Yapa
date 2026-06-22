@@ -37,6 +37,21 @@ export type EnvioEntidade =
 const LIMITE_BOTOES = 3;  // WhatsApp: máx. 3 botões interativos
 const LIMITE_POLL   = 12; // WhatsApp: máx. 12 opções em enquete
 
+type ProdutoSel = { id: string; nome: string; preco_gs: number };
+
+/** Produtos disponíveis da org, na MESMA ordem usada para montar a lista (por nome). */
+async function consultarProdutosDisponiveis(admin: AdminClient, orgId: string): Promise<ProdutoSel[]> {
+  const { data, error } = await admin
+    .from("produtos")
+    .select("id, nome, preco_gs")
+    .eq("org_id", orgId)
+    .eq("disponivel", true)
+    .is("deleted_at", null)
+    .order("nome");
+  if (error) throw error;
+  return data ?? [];
+}
+
 function prefixo(i: number): string {
   const emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
   return i < emojis.length ? emojis[i] : `${i + 1}.`;
@@ -86,15 +101,8 @@ export async function montarListaEntidade(
   try {
     switch (tipo) {
       case "produto": {
-        const { data, error } = await admin
-          .from("produtos")
-          .select("nome, preco_gs")
-          .eq("org_id", orgId)
-          .eq("disponivel", true)
-          .is("deleted_at", null)
-          .order("nome");
-        if (error) return null;
-        const labels = (data ?? []).map((p) => `${p.nome} - ${gs(p.preco_gs)}`);
+        const rows = await consultarProdutosDisponiveis(admin, orgId);
+        const labels = rows.map((p) => `${p.nome} - ${gs(p.preco_gs)}`);
         return resolverModo(node, labels, "O que você quer pedir?", "Nenhum produto disponível no momento.");
       }
       case "hub": {
@@ -124,6 +132,44 @@ export async function montarListaEntidade(
         return resolverModo(node, labels, "Qual entregador?", "Nenhum entregador disponível no momento.");
       }
     }
+  } catch {
+    return null;
+  }
+}
+
+/** Item escolhido pelo cliente (id real + preço-base em GS, snapshot p/ o carrinho). */
+export type ItemSelecionado = { produto_id: string; preco: number };
+
+/**
+ * Mapeia a resposta do cliente (clique/voto ou número digitado) de volta ao produto
+ * real do catálogo. Usa a MESMA consulta ordenada de `montarListaEntidade`, então:
+ *  - `indice` (1-based) casa com a lista numerada de texto;
+ *  - `texto` casa com o label de botão/enquete que enviamos.
+ * Retorna null se nada casar ou se o banco falhar.
+ */
+export async function resolverSelecaoProduto(
+  admin: AdminClient,
+  orgId: string,
+  selecao: { texto: string; indice: number | null },
+): Promise<ItemSelecionado | null> {
+  try {
+    const rows = await consultarProdutosDisponiveis(admin, orgId);
+    if (rows.length === 0) return null;
+
+    // 1) Por índice (fallback de texto numerado).
+    if (selecao.indice != null && selecao.indice >= 1 && selecao.indice <= rows.length) {
+      const r = rows[selecao.indice - 1];
+      return { produto_id: r.id, preco: r.preco_gs };
+    }
+    // 2) Por label exato (botão/enquete devolvem o texto que montamos).
+    const alvo = selecao.texto.trim();
+    const porLabel = rows.find((r) => `${r.nome} - ${gs(r.preco_gs)}` === alvo);
+    if (porLabel) return { produto_id: porLabel.id, preco: porLabel.preco_gs };
+    // 3) Por nome (robustez: WhatsApp pode truncar labels longos).
+    const porNome = rows.find((r) => alvo === r.nome || alvo.startsWith(r.nome));
+    if (porNome) return { produto_id: porNome.id, preco: porNome.preco_gs };
+
+    return null;
   } catch {
     return null;
   }

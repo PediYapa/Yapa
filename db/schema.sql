@@ -259,6 +259,21 @@ create index if not exists idx_conversas_org_status on yapa.conversas(org_id, st
 create index if not exists idx_conversas_telefone on yapa.conversas(org_id, telefone);
 
 -- ---------------------------------------------------------------------------
+-- Sessões do bot WhatsApp (posição no fluxo + carrinho do cliente)
+-- ---------------------------------------------------------------------------
+create table if not exists yapa.sessoes_whatsapp (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references yapa.orgs on delete cascade,
+  telefone    text not null,
+  no_atual_id text,                                   -- nó do fluxo onde o cliente parou
+  carrinho    jsonb not null default '[]'::jsonb,     -- [{ produto_id, quantidade, preco }]
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (org_id, telefone)
+);
+create index if not exists idx_sessoes_wpp_telefone on yapa.sessoes_whatsapp(org_id, telefone);
+
+-- ---------------------------------------------------------------------------
 -- Fluxos (construtor visual do bot — nós/arestas do React Flow em jsonb)
 -- ---------------------------------------------------------------------------
 create table if not exists yapa.fluxos (
@@ -354,7 +369,7 @@ declare t text;
 begin
   foreach t in array array[
     'user_profiles','clientes','distribuidoras','produtos','entregadores',
-    'pedidos','entregas','pagamentos','conversas','fluxos'
+    'pedidos','entregas','pagamentos','conversas','fluxos','sessoes_whatsapp'
   ] loop
     execute format(
       'drop trigger if exists trg_touch_%1$s on yapa.%1$s;
