@@ -238,6 +238,8 @@ export type FluxoEdge = {
   target: string;
   sourceHandle?: string | null;
   targetHandle?: string | null;
+  // Espelho de sourceHandle p/ rastrear qual opção/botão originou a aresta (debug/backend).
+  data?: { origemOpcaoId?: string | null } | null;
 };
 
 export type FluxoRow = {

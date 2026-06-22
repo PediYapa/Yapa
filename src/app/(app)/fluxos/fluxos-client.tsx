@@ -37,6 +37,7 @@ import {
   X,
   Workflow,
   FileUp,
+  FileDown,
 } from "lucide-react";
 import type { FluxoRow, FluxoNodeData, FluxoNoTipo, FluxoBotao } from "@/lib/database.types";
 import { salvarFluxo, ativarFluxo, desativarFluxo, excluirFluxo } from "@/app/actions/fluxos";
@@ -68,6 +69,19 @@ const META: Record<FluxoNoTipo, { label: string; icon: typeof Play; cor: string 
   external_link: { label: "Link Externo", icon: ExternalLink, cor: "text-blue-600" },
   location_capture: { label: "Localização", icon: MapPin, cor: "text-orange-600" },
 };
+
+/**
+ * Classificação de saída dos nós (alinhada ao motor lógico em fluxo-engine.ts):
+ *  - terminal  → encerra a conversa, SEM handle de saída (atendente / checkout-pagamento).
+ *  - ramificado → um handle de saída por opção (botoes). id do handle = id do botão.
+ *  - linear    → um único handle genérico (inicio, texto, imagem, produto, link, localização).
+ */
+function ehTerminal(tipo: FluxoNoTipo): boolean {
+  return tipo === "humano" || tipo === "payment_dlocal";
+}
+function ehRamificado(d: FluxoNodeData): boolean {
+  return d.tipo === "botoes" && (d.botoes ?? []).length > 0;
+}
 
 /** Nó visual do fluxo. Botões expõem um handle de saída por botão (ramificação). */
 function NoCard({ data, selected }: NodeProps<NoFluxo>) {
@@ -128,20 +142,32 @@ function NoCard({ data, selected }: NodeProps<NoFluxo>) {
         )}
       </div>
 
-      {/* Saídas */}
-      {d.tipo === "botoes" ? (
+      {/* Rótulos das ramificações: alinham visualmente cada botão ao seu handle. */}
+      {ehRamificado(d) && (
+        <div className="flex gap-1 border-t border-border px-3 pb-3 pt-1.5">
+          {(d.botoes ?? []).map((b) => (
+            <span key={b.id} className="flex-1 truncate text-center text-[10px] text-amber-600" title={b.label}>
+              {b.label || "—"}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Saídas (handles) — alinhadas ao motor: ramificado / terminal / linear. */}
+      {ehRamificado(d) ? (
         (d.botoes ?? []).map((b, i, arr) => (
           <Handle
             key={b.id}
             id={b.id}
             type="source"
             position={Position.Bottom}
+            title={b.label}
             style={{ left: `${((i + 1) / (arr.length + 1)) * 100}%` }}
-            className="!size-2.5 !bg-amber-500"
+            className="!size-3 !border-2 !border-card !bg-amber-500"
           />
         ))
-      ) : d.tipo === "humano" ? null : (
-        <Handle type="source" position={Position.Bottom} className="!size-2.5 !bg-primary" />
+      ) : ehTerminal(d.tipo) ? null : (
+        <Handle type="source" position={Position.Bottom} className="!size-3 !border-2 !border-card !bg-primary" />
       )}
     </div>
   );
@@ -162,6 +188,19 @@ function novoNo(tipo: FluxoNoTipo, i: number): NoFluxo {
     type: "noFluxo",
     position: { x: 120 + (i % 3) * 80, y: 80 + i * 70 },
     data: data as NoData,
+  };
+}
+
+/** Serializa uma aresta no formato do validador Zod (descarta sujeira do React Flow). */
+function serializarEdge(e: Edge) {
+  const origem = e.data?.origemOpcaoId;
+  return {
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? null,
+    targetHandle: e.targetHandle ?? null,
+    ...(typeof origem === "string" ? { data: { origemOpcaoId: origem } } : {}),
   };
 }
 
@@ -196,7 +235,7 @@ export function FluxosClient({
     setEditId(f.id);
     setNome(f.nome);
     setNodes((f.nodes ?? []).map((n) => ({ ...n, type: "noFluxo", data: n.data as NoData })));
-    setEdges((f.edges ?? []).map((e) => ({ ...e })));
+    setEdges((f.edges ?? []).map((e) => ({ ...e, data: e.data ?? undefined })));
     setSelId(null);
     setErro(null);
   }
@@ -229,7 +268,15 @@ export function FluxosClient({
           if (e.source !== conn.source) return true;
           return (e.sourceHandle ?? null) !== (conn.sourceHandle ?? null);
         });
-        return addEdge(conn, limpos);
+        // Grava origemOpcaoId na aresta recém-criada: sourceHandle é o canônico
+        // (lido pelo engine), e data.origemOpcaoId é o espelho explícito p/ backend/debug.
+        return addEdge(conn, limpos).map((e) =>
+          conn.sourceHandle &&
+          e.source === conn.source &&
+          (e.sourceHandle ?? null) === (conn.sourceHandle ?? null)
+            ? { ...e, data: { ...(e.data ?? {}), origemOpcaoId: conn.sourceHandle } }
+            : e,
+        );
       });
     },
     [],
@@ -332,12 +379,17 @@ export function FluxosClient({
         const source = typeof e.source === "string" ? e.source.trim() : "";
         const target = typeof e.target === "string" ? e.target.trim() : "";
         if (!source || !target) return [];
+        const sourceHandle = typeof e.sourceHandle === "string" ? e.sourceHandle : undefined;
+        const eData = (typeof e.data === "object" && e.data ? e.data : {}) as Record<string, unknown>;
+        // origemOpcaoId: aceita o do JSON ou cai no sourceHandle (mantém rastreabilidade).
+        const origem = typeof eData.origemOpcaoId === "string" ? eData.origemOpcaoId : sourceHandle;
         return [{
           id: typeof e.id === "string" && e.id.trim() ? e.id.trim() : crypto.randomUUID(),
           source,
           target,
-          sourceHandle: typeof e.sourceHandle === "string" ? e.sourceHandle : undefined,
+          sourceHandle,
           targetHandle: typeof e.targetHandle === "string" ? e.targetHandle : undefined,
+          ...(origem ? { data: { origemOpcaoId: origem } } : {}),
         }];
       });
 
@@ -369,13 +421,7 @@ export function FluxosClient({
         position: n.position,
         data: n.data as FluxoNodeData,
       })),
-      edges: edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-        targetHandle: e.targetHandle ?? null,
-      })),
+      edges: edges.map(serializarEdge),
     };
     const res = await salvarFluxo(payload);
     setSalvando(false);
@@ -385,6 +431,27 @@ export function FluxosClient({
     }
     if (editId === "novo" && res.id) setEditId(res.id);
     router.refresh();
+  }
+
+  /** Exporta nodes/edges no formato do validador Zod, sem sujeira do React Flow. */
+  function exportarJSON() {
+    const payload = {
+      nome: nome || "fluxo",
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        position: n.position,
+        data: n.data as FluxoNodeData,
+      })),
+      edges: edges.map(serializarEdge),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "fluxo-export.json";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function alternarAtivo() {
@@ -466,6 +533,9 @@ export function FluxosClient({
                     <FileUp /> Importar JSON
                   </Button>
                 )}
+                <Button variant="outline" size="sm" onClick={exportarJSON}>
+                  <FileDown /> Exportar JSON
+                </Button>
                 {fluxoAtual && (
                   <Button variant={fluxoAtual.ativo ? "outline" : "default"} size="sm" onClick={alternarAtivo} disabled={!canWrite}>
                     {fluxoAtual.ativo ? <><PowerOff /> Desativar</> : <><Power /> Ativar</>}
