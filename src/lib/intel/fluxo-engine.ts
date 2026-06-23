@@ -96,7 +96,7 @@ export function executarFluxo(
     if (espera?.data.tipo === "botoes") {
       const escolhido = casarBotao(espera.data.botoes, texto);
       if (!escolhido) {
-        // não entendeu: reapresenta os botões e segue esperando no mesmo nó
+        // Não reconheceu a resposta: reapresenta os botões aguardando no mesmo nó.
         envios.push({
           tipo: "botoes",
           texto: espera.data.texto || "Escolha uma das opções:",
@@ -105,6 +105,17 @@ export function executarFluxo(
         return { envios, no_atual: espera.id, handoff: false };
       }
       atual = proximoPorHandle(espera.id, escolhido.id);
+      if (!atual) {
+        // Botão reconhecido, mas aresta não configurada (sourceHandle ausente no JSON importado).
+        // Re-apresenta em vez de reiniciar do início, para não criar um loop invisível.
+        console.warn("[yapa:engine] sourceHandle não encontrado para botão:", escolhido.id, "no nó:", espera.id);
+        envios.push({
+          tipo: "botoes",
+          texto: espera.data.texto || "Escolha uma das opções:",
+          botoes: espera.data.botoes ?? [],
+        });
+        return { envios, no_atual: espera.id, handoff: false };
+      }
     } else if (espera) {
       atual = proximoPadrao(espera.id);
     }

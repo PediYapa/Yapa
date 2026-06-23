@@ -46,15 +46,15 @@ export async function POST(request: Request) {
   let textoEntidade = "";
   let respostaInterativa = false;
 
-  if (tipoMsg === "buttonsresponse") {
-    // Fix #2 — extrair o ID original do botão: é o que o engine compara contra sourceHandle.
-    // O display text vai para textoEntidade (resolução de produto por label).
-    const br = body.buttonsResponseMessage as Record<string, unknown> | undefined;
-    const buttonId   = String(br?.selectedButtonId   ?? "").trim();
-    const displayText = String(br?.selectedDisplayText ?? "").trim();
-    texto        = buttonId   || displayText;  // ID primeiro para roteamento
+  if (tipoMsg === "buttonsresponse" || tipoMsg === "listresponse") {
+    // Captura botão/lista: aceita tanto buttonsResponseMessage quanto listResponseMessage (Z-API).
+    const br = (body.buttonsResponseMessage ?? body.listResponseMessage) as Record<string, unknown> | undefined;
+    const buttonId   = String(br?.selectedButtonId   ?? br?.listId ?? "").trim();
+    const displayText = String(br?.selectedDisplayText ?? br?.title ?? "").trim();
+    texto        = buttonId   || displayText;  // ID primeiro para roteamento via sourceHandle
     textoEntidade = displayText || buttonId;   // label para entidades e log
     respostaInterativa = texto.length > 0;
+    console.log("[yapa:botao]", { tipoMsg, buttonId, displayText, phone: phone.slice(-4) });
   } else if (tipoMsg === "pollupdate") {
     // Polls não têm ID separado — a opção selecionada é o próprio texto.
     const pu = body.pollUpdateMessage as Record<string, unknown> | undefined;
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
       const getNode = (id: string): FluxoNode | undefined => fluxo.nodes.find((n) => n.id === id);
       const inicioNode = fluxo.nodes.find((n) => n.data?.tipo === "inicio");
 
-      // Fix #1 — recuperarOuCriarSessao agora usa upsert atômico (sem TOCTOU).
+      // Carrinho: vem de sessoes_whatsapp se disponível (não bloqueia o fluxo se falhar).
       const sessao = await recuperarOuCriarSessao(admin, orgId, phone, inicioNode?.id ?? null);
       const carrinho: CarrinhoItem[] = sessao?.carrinho ? [...sessao.carrinho] : [];
 
@@ -151,10 +151,22 @@ export async function POST(request: Request) {
         );
       }
 
+      // Estado do engine: lido de conversas.fluxo_estado (tabela original, sempre disponível).
+      // sessoes_whatsapp.no_atual_id é usado apenas como backup de sessão para o carrinho.
+      // Isso garante que o estado de navegação persiste mesmo se sessoes_whatsapp falhar.
+      const estadoConversa = conversa?.fluxo_estado ?? null;
       const estado: FluxoEstado | null =
-        sessao?.no_atual_id && getNode(sessao.no_atual_id)
-          ? { fluxo_id: fluxo.id, no_atual: sessao.no_atual_id, atualizado_em: agora }
+        estadoConversa?.no_atual && getNode(estadoConversa.no_atual)
+          ? estadoConversa
           : null;
+
+      console.log("[yapa:engine-entrada]", {
+        phone: phone.slice(-4),
+        tipoMsg,
+        texto: texto.slice(0, 30),
+        no_atual: estado?.no_atual ?? "null(inicio)",
+        sessao_id: sessao?.id ?? "null",
+      });
 
       const enviarLista = async (no: FluxoNode, ent: EntidadeTipo): Promise<void> => {
         const envio = await montarListaEntidade(admin, orgId, no, ent);
@@ -230,6 +242,13 @@ export async function POST(request: Request) {
         respondeuPorFluxo = resultado.envios.length > 0;
         acionarHandoff = resultado.handoff;
         novoNoAtual = resultado.no_atual;
+
+        console.log("[yapa:engine-saida]", {
+          phone: phone.slice(-4),
+          envios: resultado.envios.length,
+          no_atual_novo: resultado.no_atual ?? "null(encerrado)",
+          handoff: resultado.handoff,
+        });
 
         if (resultado.no_atual) {
           const no = getNode(resultado.no_atual);

@@ -181,7 +181,7 @@ const TIPOS_VALIDOS = new Set(Object.keys(META));
 function novoNo(tipo: FluxoNoTipo, i: number): NoFluxo {
   const data: FluxoNodeData =
     tipo === "botoes"
-      ? { tipo, texto: "Escolha uma opção:", botoes: [{ id: crypto.randomUUID(), label: "Opção 1" }] }
+      ? { tipo, texto: "Escolha uma opção:", botoes: [{ id: `btn-${crypto.randomUUID().split("-")[0]}`, label: "Opção 1" }] }
       : { tipo, texto: "" };
   return {
     id: crypto.randomUUID(),
@@ -309,7 +309,7 @@ export function FluxosClient({
     if (!d) return;
     const atuais = d.botoes ?? [];
     if (atuais.length >= 3) return;
-    patchSel({ botoes: [...atuais, { id: crypto.randomUUID(), label: `Opção ${atuais.length + 1}` }] });
+    patchSel({ botoes: [...atuais, { id: `btn-${crypto.randomUUID().split("-")[0]}`, label: `Opção ${atuais.length + 1}` }] });
   }
   function editBotao(id: string, label: string) {
     const d = selNode?.data as FluxoNodeData | undefined;
@@ -379,10 +379,12 @@ export function FluxosClient({
         const source = typeof e.source === "string" ? e.source.trim() : "";
         const target = typeof e.target === "string" ? e.target.trim() : "";
         if (!source || !target) return [];
-        const sourceHandle = typeof e.sourceHandle === "string" ? e.sourceHandle : undefined;
         const eData = (typeof e.data === "object" && e.data ? e.data : {}) as Record<string, unknown>;
-        // origemOpcaoId: aceita o do JSON ou cai no sourceHandle (mantém rastreabilidade).
-        const origem = typeof eData.origemOpcaoId === "string" ? eData.origemOpcaoId : sourceHandle;
+        const origemId = typeof eData.origemOpcaoId === "string" ? eData.origemOpcaoId : undefined;
+        // sourceHandle: usa o explícito do JSON, cai em origemOpcaoId se ausente.
+        // Sem sourceHandle, o engine não encontra a aresta saindo de um botão → loop.
+        const sourceHandle = typeof e.sourceHandle === "string" ? e.sourceHandle : origemId;
+        const origem = origemId ?? sourceHandle;
         return [{
           id: typeof e.id === "string" && e.id.trim() ? e.id.trim() : crypto.randomUUID(),
           source,
