@@ -19,12 +19,19 @@ const schema = z.object({
   notas: z.string().trim().max(1000).optional(),
 });
 
+/** Normaliza número vindo de input pt-BR/PY: aceita vírgula decimal e campo vazio. */
+function numOuUndefined(v: string | undefined): string | undefined {
+  if (v === undefined || v.trim() === "") return undefined;
+  return v.replace(",", ".");
+}
+
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData) as Record<string, string>;
-  return schema.parse({
+  return schema.safeParse({
     ...raw,
-    latitude: raw.latitude === "" ? undefined : raw.latitude,
-    longitude: raw.longitude === "" ? undefined : raw.longitude,
+    latitude: numOuUndefined(raw.latitude),
+    longitude: numOuUndefined(raw.longitude),
+    raio_km: numOuUndefined(raw.raio_km) ?? raw.raio_km,
     recebe_dinheiro: raw.recebe_dinheiro === "true",
     ativo: raw.ativo === "true",
   });
@@ -33,7 +40,11 @@ function parse(formData: FormData) {
 export async function salvarDistribuidora(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
     const { supabase, profile } = await guard("distribuidoras", "write");
-    const data = parse(formData);
+    const parsed = parse(formData);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+    }
+    const data = parsed.data;
     const payload = {
       nome: data.nome,
       contato: data.contato || null,

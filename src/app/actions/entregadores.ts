@@ -16,7 +16,7 @@ const schema = z.object({
 
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData) as Record<string, string>;
-  return schema.parse({
+  return schema.safeParse({
     ...raw,
     distribuidora_base_id: raw.distribuidora_base_id === "" ? undefined : raw.distribuidora_base_id,
     ativo: raw.ativo === "true",
@@ -26,7 +26,11 @@ function parse(formData: FormData) {
 export async function salvarEntregador(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
     const { supabase, profile } = await guard("entregadores", "write");
-    const data = parse(formData);
+    const parsed = parse(formData);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+    }
+    const data = parsed.data;
     const payload = {
       nome: data.nome,
       telefone: data.telefone || null,
