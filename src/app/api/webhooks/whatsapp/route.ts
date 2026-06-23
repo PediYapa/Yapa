@@ -11,11 +11,15 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/webhooks/whatsapp — recebe mensagens inbound do Z-API.
- * Fase 1: registra a conversa, interpreta a mensagem com o agente e responde
- * de forma "rústica" (guiada). Operação single-tenant: resolve a org única.
  *
- * Segurança: opcional via ?secret= comparado a ZAPI_WEBHOOK_SECRET ou ao
- * zapi_webhook_secret salvo na org.
+ * Extração de interatividade:
+ *  - ButtonsResponse: `texto` recebe o `selectedButtonId` (ID original do botão)
+ *    que o engine usa para localizar a aresta pelo `sourceHandle`. O `selectedDisplayText`
+ *    fica em `textoEntidade` exclusivamente para resolução de produtos/entidades.
+ *  - PollUpdate: ambas as variáveis recebem o nome da opção (não há ID separado em polls).
+ *  - Texto livre: ambas são iguais.
+ *
+ * Sanitização de telefone: `.replace(/\D/g, "")` aplicado antes de qualquer lookup.
  */
 export async function POST(request: Request) {
   const url = new URL(request.url);
@@ -27,35 +31,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  // Ignora mensagens enviadas por nós mesmos
   if (body.fromMe === true) return NextResponse.json({ ok: true, ignored: "fromMe" });
 
+  // Fix #3 — sanitização de chave primária: remove qualquer caractere não-numérico
+  // (e.g. "+", "@c.us", "@s.whatsapp.net") antes de buscar/criar a sessão no banco.
   const phone = String(body.phone || body.from || "").replace(/\D/g, "");
   if (!phone) return NextResponse.json({ error: "telefone ausente" }, { status: 400 });
 
-  // Extrai o texto efetivo e detecta respostas interativas (clique em botão ou voto em enquete).
-  // Ambos os casos são tratados como entrada válida sem precisar de número digitado.
   const tipoMsg = String(body.type || "").toLowerCase();
+
+  // `texto`       → passado ao engine para roteamento de arestas (buttonId tem prioridade).
+  // `textoEntidade` → label legível usado para resolução de entidades e log de conversa.
   let texto = "";
+  let textoEntidade = "";
   let respostaInterativa = false;
 
   if (tipoMsg === "buttonsresponse") {
-    // Usuário clicou num botão interativo (send-button-list).
+    // Fix #2 — extrair o ID original do botão: é o que o engine compara contra sourceHandle.
+    // O display text vai para textoEntidade (resolução de produto por label).
     const br = body.buttonsResponseMessage as Record<string, unknown> | undefined;
-    texto = String(br?.selectedDisplayText ?? br?.selectedButtonId ?? "");
+    const buttonId   = String(br?.selectedButtonId   ?? "").trim();
+    const displayText = String(br?.selectedDisplayText ?? "").trim();
+    texto        = buttonId   || displayText;  // ID primeiro para roteamento
+    textoEntidade = displayText || buttonId;   // label para entidades e log
     respostaInterativa = texto.length > 0;
   } else if (tipoMsg === "pollupdate") {
-    // Usuário votou numa enquete (send-poll). Z-API devolve os votos em `votes` ou `values`.
+    // Polls não têm ID separado — a opção selecionada é o próprio texto.
     const pu = body.pollUpdateMessage as Record<string, unknown> | undefined;
     const votes =
       ((pu?.votes ?? pu?.values) as Array<Record<string, unknown>> | undefined) ?? [];
-    // Pega a primeira opção que tenha pelo menos um voto (evita desvotes / recuo).
     const votado = votes.find((v) => {
       const nome = v.name ?? v.optionName;
       const votantes = v.voterNames ?? v.voters;
       return nome != null && (votantes == null || (Array.isArray(votantes) && votantes.length > 0));
     });
-    texto = String(votado?.name ?? votado?.optionName ?? "");
+    texto        = String(votado?.name ?? votado?.optionName ?? "");
+    textoEntidade = texto;
     respostaInterativa = texto.length > 0;
   } else {
     // Mensagem de texto comum.
@@ -63,11 +74,11 @@ export async function POST(request: Request) {
       (typeof body.text === "object" && body.text
         ? String((body.text as Record<string, unknown>).message || "")
         : String(body.message || body.text || "")) || "";
+    textoEntidade = texto;
   }
 
   const admin = createAdminClient();
 
-  // Carrega a org com as credenciais Z-API salvas no banco
   const { data: org } = await admin
     .from("orgs")
     .select("id, zapi_instance, zapi_token, zapi_client_token, zapi_webhook_secret")
@@ -75,13 +86,11 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (!org) return NextResponse.json({ error: "org não configurada" }, { status: 500 });
 
-  // Valida o secret do webhook (env var tem precedência sobre o banco)
   const secret = process.env.ZAPI_WEBHOOK_SECRET ?? org.zapi_webhook_secret;
   if (secret && url.searchParams.get("secret") !== secret) {
     return NextResponse.json({ error: "não autorizado" }, { status: 401 });
   }
 
-  // Monta config Z-API: credenciais do banco têm precedência sobre env vars
   const zapiCfg: ZapiConfig | null =
     org.zapi_instance && org.zapi_token
       ? { instance: org.zapi_instance, token: org.zapi_token, clientToken: org.zapi_client_token }
@@ -90,7 +99,6 @@ export async function POST(request: Request) {
   const orgId = org.id;
   const agora = new Date().toISOString();
 
-  // Localiza/cria conversa aberta para o telefone
   const { data: existente } = await admin
     .from("conversas")
     .select("*")
@@ -100,7 +108,8 @@ export async function POST(request: Request) {
     .order("created_at", { ascending: false })
     .maybeSingle();
 
-  const msgCliente: ConversaMensagem = { de: "cliente", texto, tipo: "texto", em: agora };
+  // Usa textoEntidade no log (mais legível que o buttonId cru).
+  const msgCliente: ConversaMensagem = { de: "cliente", texto: textoEntidade || texto, tipo: "texto", em: agora };
 
   const conversa = existente;
   const handoff = conversa?.handoff_humano ?? false;
@@ -111,7 +120,6 @@ export async function POST(request: Request) {
   let respondeuPorFluxo = false;
   let intencaoLabel: string | undefined;
 
-  // 1) Fluxo ativo tem prioridade (se um humano não assumiu).
   if (!handoff) {
     const { data: fluxo } = await admin
       .from("fluxos")
@@ -125,14 +133,10 @@ export async function POST(request: Request) {
       const getNode = (id: string): FluxoNode | undefined => fluxo.nodes.find((n) => n.id === id);
       const inicioNode = fluxo.nodes.find((n) => n.data?.tipo === "inicio");
 
-      // 1) RECUPERAÇÃO DE ESTADO: sessão do bot (posição + carrinho) por telefone.
-      //    Se não existir, nasce no nó inicial. Falha de banco → sessão null e o
-      //    fluxo segue respondendo, apenas sem persistir (degradação suave).
+      // Fix #1 — recuperarOuCriarSessao agora usa upsert atômico (sem TOCTOU).
       const sessao = await recuperarOuCriarSessao(admin, orgId, phone, inicioNode?.id ?? null);
       const carrinho: CarrinhoItem[] = sessao?.carrinho ? [...sessao.carrinho] : [];
 
-      // Resolve os produtos de nós de PRODUTO ÚNICO (com produto_id) — nome/preço/imagem.
-      // Nós de catálogo (produto sem produto_id) são resolvidos dinamicamente mais abaixo.
       const produtoIds = fluxo.nodes
         .filter((n) => n.data?.tipo === "produto" && n.data.produto_id)
         .map((n) => n.data.produto_id as string);
@@ -147,15 +151,11 @@ export async function POST(request: Request) {
         );
       }
 
-      // Posição autoritativa = sessão (validada contra o fluxo ativo atual).
-      // Nó inexistente/ausente → null → recomeça do início (dispara boas-vindas).
       const estado: FluxoEstado | null =
         sessao?.no_atual_id && getNode(sessao.no_atual_id)
           ? { fluxo_id: fluxo.id, no_atual: sessao.no_atual_id, atualizado_em: agora }
           : null;
 
-      // Envia a lista de entidade no formato rico adequado (botões / enquete / texto)
-      // e registra no histórico. Fallback amigável se o Supabase ou Z-API falhar.
       const enviarLista = async (no: FluxoNode, ent: EntidadeTipo): Promise<void> => {
         const envio = await montarListaEntidade(admin, orgId, no, ent);
         let msgLog: string;
@@ -170,12 +170,10 @@ export async function POST(request: Request) {
             await enviarBotoes(phone, envio.titulo, envio.botoes, zapiCfg);
             msgLog = `[botões] ${envio.titulo} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
           } else {
-            // poll
             await enviarPoll(phone, envio.titulo, envio.opcoes, zapiCfg);
             msgLog = `[enquete] ${envio.titulo} [${envio.opcoes.join(" | ")}]`;
           }
         } catch {
-          // Qualquer falha de envio → texto de fallback, não-bloqueante
           try { await enviarTexto(phone, FALLBACK_ENTIDADE, zapiCfg); } catch { /* noop */ }
           msgLog = FALLBACK_ENTIDADE;
         }
@@ -184,12 +182,9 @@ export async function POST(request: Request) {
 
       let novoNoAtual: string | null = estado?.no_atual ?? null;
 
-      // (A) Já estávamos pausados num nó de entidade?
-      //     • Resposta interativa (botão/poll) → sempre válida, avança o fluxo.
-      //     • Número digitado → válido, avança.
-      //     • Texto livre → inválido, reapresenta a lista e aguarda.
       const noEspera = estado?.no_atual ? getNode(estado.no_atual) : undefined;
       const entEspera = noEspera ? tipoEntidadeDoNo(noEspera) : null;
+      // Para validação de seleção numérica, usa `texto` (que pode ser buttonId ou número digitado).
       const escolha = Number.parseInt(texto.trim(), 10);
       const selecaoValida = respostaInterativa || (Number.isInteger(escolha) && escolha >= 1);
 
@@ -198,15 +193,16 @@ export async function POST(request: Request) {
         respondeuPorFluxo = true;
         novoNoAtual = noEspera.id;
       } else {
-        // (B) GRAVAÇÃO DO CLIQUE NO CARRINHO: seleção válida num nó de PRODUTO →
-        //     recupera o produto real (id + preço) e empurra { produto_id, quantidade, preco }.
         if (entEspera === "produto" && noEspera && selecaoValida) {
+          // Fix #2 — usa textoEntidade (label do produto, e.g. "Cerveja - Gs. 15.000")
+          // para resolver o produto real; não o buttonId (e.g. "ent_0").
           const indice = respostaInterativa ? null : Number.isInteger(escolha) ? escolha : null;
-          const item = await resolverSelecaoProduto(admin, orgId, { texto, indice });
+          const item = await resolverSelecaoProduto(admin, orgId, { texto: textoEntidade, indice });
           if (item) carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco });
         }
 
-        // (C) AVANÇO DE NÓ: o engine puro avança a partir do nó atual e emite o conteúdo.
+        // `texto` aqui é o buttonId (para ButtonsResponse) — o engine usa casarBotao()
+        // que compara contra b.id antes de b.label, resolvendo a aresta pelo sourceHandle.
         const resultado = executarFluxo(
           { nodes: fluxo.nodes, edges: fluxo.edges },
           estado,
@@ -235,8 +231,6 @@ export async function POST(request: Request) {
         acionarHandoff = resultado.handoff;
         novoNoAtual = resultado.no_atual;
 
-        // (D) Pausou num nó de entidade (produto-catálogo / hub / entregador)? Consulta
-        //     o banco, envia a lista clicável e mantém o estado nesse nó (aguarda seleção).
         if (resultado.no_atual) {
           const no = getNode(resultado.no_atual);
           const ent = no ? tipoEntidadeDoNo(no) : null;
@@ -246,22 +240,21 @@ export async function POST(request: Request) {
           }
         }
 
-        // (E) CICLO DE FECHAMENTO: fluxo chegou ao fim (nó de conclusão) → zera o
-        //     carrinho para que a próxima interação comece um atendimento do zero.
         if (resultado.no_atual === null) carrinho.length = 0;
       }
 
-      // Espelha a posição na conversa (inbox de atendimento) e PERSISTE a sessão do bot.
       fluxoEstado = novoNoAtual
         ? { fluxo_id: fluxo.id, no_atual: novoNoAtual, atualizado_em: agora }
         : null;
+
+      // Fix #1 — salvarSessao é awaited strictamente antes do return 200;
+      // a Vercel não pode matar esta mutação. O helper agora loga erros em vez de engoli-los.
       if (sessao) await salvarSessao(admin, sessao.id, { no_atual_id: novoNoAtual, carrinho });
 
       if (respondeuPorFluxo) intencaoLabel = "fluxo";
     }
   }
 
-  // 2) Fallback: sem fluxo que respondeu → agente OpenAI (comportamento anterior).
   if (!handoff && !respondeuPorFluxo) {
     const intencao = await interpretarMensagem(texto);
     intencaoLabel = intencao.intencao;
@@ -277,6 +270,7 @@ export async function POST(request: Request) {
 
   const handoffFinal = handoff || acionarHandoff;
 
+  // Todas as mutações de banco abaixo são awaited antes do return — nenhuma é fire-and-forget.
   if (conversa) {
     await admin
       .from("conversas")
