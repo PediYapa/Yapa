@@ -96,7 +96,11 @@ export function executarFluxo(
     if (espera?.data.tipo === "botoes") {
       const escolhido = casarBotao(espera.data.botoes, texto);
       if (!escolhido) {
-        // Não reconheceu a resposta: reapresenta os botões aguardando no mesmo nó.
+        // Log diagnóstico: mostra o que chegou vs o que estava esperando.
+        console.warn("[yapa:engine] casarBotao falhou", {
+          textoRecebido: texto,
+          botoesEsperados: (espera.data.botoes ?? []).map((b) => ({ id: b.id, label: b.label })),
+        });
         envios.push({
           tipo: "botoes",
           texto: espera.data.texto || "Escolha uma das opções:",

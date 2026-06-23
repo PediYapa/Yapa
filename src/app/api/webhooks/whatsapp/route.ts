@@ -68,12 +68,14 @@ export async function POST(request: Request) {
     tipoMsg === "buttonresponse";
 
   if (ehRespostaBotao && brPayload) {
+    // Log completo para ver exatamente o que Z-API manda dentro de buttonsResponseMessage.
+    console.log("[yapa:brPayload]", JSON.stringify(brPayload));
     const buttonId    = String(brPayload.selectedButtonId   ?? brPayload.listId    ?? brPayload.id    ?? "").trim();
     const displayText = String(brPayload.selectedDisplayText ?? brPayload.title    ?? brPayload.label ?? "").trim();
     texto        = buttonId   || displayText;
     textoEntidade = displayText || buttonId;
     respostaInterativa = texto.length > 0;
-    console.log("[yapa:botao]", { tipoMsg, buttonId, displayText, phone: phone.slice(-4) });
+    console.log("[yapa:botao]", { tipoMsg, buttonId, displayText, texto, phone: phone.slice(-4) });
   } else if (tipoMsg === "pollupdate") {
     // Polls não têm ID separado — a opção selecionada é o próprio texto.
     const pu = body.pollUpdateMessage as Record<string, unknown> | undefined;
