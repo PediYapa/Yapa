@@ -33,26 +33,45 @@ export async function POST(request: Request) {
 
   if (body.fromMe === true) return NextResponse.json({ ok: true, ignored: "fromMe" });
 
-  // Fix #3 — sanitização de chave primária: remove qualquer caractere não-numérico
-  // (e.g. "+", "@c.us", "@s.whatsapp.net") antes de buscar/criar a sessão no banco.
   const phone = String(body.phone || body.from || "").replace(/\D/g, "");
   if (!phone) return NextResponse.json({ error: "telefone ausente" }, { status: 400 });
 
   const tipoMsg = String(body.type || "").toLowerCase();
 
-  // `texto`       → passado ao engine para roteamento de arestas (buttonId tem prioridade).
-  // `textoEntidade` → label legível usado para resolução de entidades e log de conversa.
+  // Log diagnóstico: mostra o que o Z-API está enviando (visível em Vercel → Functions → logs).
+  console.log("[yapa:webhook]", {
+    type: body.type,
+    phone: phone.slice(-4),
+    keys: Object.keys(body).join(","),
+    buttonsResponseMessage: body.buttonsResponseMessage != null,
+    buttonResponseMessage:  body.buttonResponseMessage  != null,
+    listResponseMessage:    body.listResponseMessage    != null,
+    text: typeof body.text === "string" ? body.text?.slice(0, 30) : typeof body.text,
+    message: typeof body.message === "string" ? String(body.message).slice(0, 30) : undefined,
+  });
+
   let texto = "";
   let textoEntidade = "";
   let respostaInterativa = false;
 
-  if (tipoMsg === "buttonsresponse" || tipoMsg === "listresponse") {
-    // Captura botão/lista: aceita tanto buttonsResponseMessage quanto listResponseMessage (Z-API).
-    const br = (body.buttonsResponseMessage ?? body.listResponseMessage) as Record<string, unknown> | undefined;
-    const buttonId   = String(br?.selectedButtonId   ?? br?.listId ?? "").trim();
-    const displayText = String(br?.selectedDisplayText ?? br?.title ?? "").trim();
-    texto        = buttonId   || displayText;  // ID primeiro para roteamento via sourceHandle
-    textoEntidade = displayText || buttonId;   // label para entidades e log
+  // Detecta resposta de botão/lista pelo CONTEÚDO do body, não só pelo type.
+  // Z-API pode enviar type="ReceivedCallback", "ButtonsResponse", "LIST_RESPONSE", etc.
+  const brPayload =
+    (body.buttonsResponseMessage ?? body.buttonResponseMessage ?? body.listResponseMessage) as
+    | Record<string, unknown>
+    | undefined;
+
+  const ehRespostaBotao =
+    brPayload != null ||
+    tipoMsg === "buttonsresponse" ||
+    tipoMsg === "listresponse" ||
+    tipoMsg === "buttonresponse";
+
+  if (ehRespostaBotao && brPayload) {
+    const buttonId    = String(brPayload.selectedButtonId   ?? brPayload.listId    ?? brPayload.id    ?? "").trim();
+    const displayText = String(brPayload.selectedDisplayText ?? brPayload.title    ?? brPayload.label ?? "").trim();
+    texto        = buttonId   || displayText;
+    textoEntidade = displayText || buttonId;
     respostaInterativa = texto.length > 0;
     console.log("[yapa:botao]", { tipoMsg, buttonId, displayText, phone: phone.slice(-4) });
   } else if (tipoMsg === "pollupdate") {
