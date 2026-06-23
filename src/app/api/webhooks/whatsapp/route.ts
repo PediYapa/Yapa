@@ -204,8 +204,17 @@ export async function POST(request: Request) {
             await enviarBotoes(phone, envio.titulo, envio.botoes, zapiCfg);
             msgLog = `[botões] ${envio.titulo} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
           } else {
-            await enviarPoll(phone, envio.titulo, envio.opcoes, zapiCfg);
-            msgLog = `[enquete] ${envio.titulo} [${envio.opcoes.join(" | ")}]`;
+            // Poll: Z-API pode não suportar. Se falhar, cai para lista numerada em texto.
+            const pollResult = await enviarPoll(phone, envio.titulo, envio.opcoes, zapiCfg);
+            if (pollResult.ok) {
+              msgLog = `[enquete] ${envio.titulo} [${envio.opcoes.join(" | ")}]`;
+            } else {
+              console.warn("[yapa:poll-fallback] enviarPoll falhou, usando texto numerado:", pollResult.error, pollResult.data);
+              const corpo = envio.opcoes.map((o, i) => `${i + 1}. ${o}`).join("\n");
+              const mensagemFallback = `${envio.titulo}\n\n${corpo}\n\nDigite o número da opção:`;
+              await enviarTexto(phone, mensagemFallback, zapiCfg);
+              msgLog = mensagemFallback;
+            }
           }
         } catch {
           try { await enviarTexto(phone, FALLBACK_ENTIDADE, zapiCfg); } catch { /* noop */ }
