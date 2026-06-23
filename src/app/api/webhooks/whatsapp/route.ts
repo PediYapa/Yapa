@@ -70,8 +70,9 @@ export async function POST(request: Request) {
   if (ehRespostaBotao && brPayload) {
     // Log completo para ver exatamente o que Z-API manda dentro de buttonsResponseMessage.
     console.log("[yapa:brPayload]", JSON.stringify(brPayload));
-    const buttonId    = String(brPayload.selectedButtonId   ?? brPayload.listId    ?? brPayload.id    ?? "").trim();
-    const displayText = String(brPayload.selectedDisplayText ?? brPayload.title    ?? brPayload.label ?? "").trim();
+    // Z-API usa "buttonId"/"message" (não "selectedButtonId"/"selectedDisplayText").
+    const buttonId    = String(brPayload.selectedButtonId ?? brPayload.buttonId ?? brPayload.listId ?? brPayload.id    ?? "").trim();
+    const displayText = String(brPayload.selectedDisplayText ?? brPayload.message ?? brPayload.title ?? brPayload.label ?? "").trim();
     texto        = buttonId   || displayText;
     textoEntidade = displayText || buttonId;
     respostaInterativa = texto.length > 0;
