@@ -46,6 +46,7 @@ export async function POST(request: Request) {
     buttonsResponseMessage: body.buttonsResponseMessage != null,
     buttonResponseMessage:  body.buttonResponseMessage  != null,
     listResponseMessage:    body.listResponseMessage    != null,
+    pollVote:               body.pollVote               != null,
     text: typeof body.text === "string" ? body.text?.slice(0, 30) : typeof body.text,
     message: typeof body.message === "string" ? String(body.message).slice(0, 30) : undefined,
   });
@@ -77,19 +78,18 @@ export async function POST(request: Request) {
     textoEntidade = displayText || buttonId;
     respostaInterativa = texto.length > 0;
     console.log("[yapa:botao]", { tipoMsg, buttonId, displayText, texto, phone: phone.slice(-4) });
-  } else if (tipoMsg === "pollupdate") {
-    // Polls não têm ID separado — a opção selecionada é o próprio texto.
-    const pu = body.pollUpdateMessage as Record<string, unknown> | undefined;
-    const votes =
-      ((pu?.votes ?? pu?.values) as Array<Record<string, unknown>> | undefined) ?? [];
-    const votado = votes.find((v) => {
-      const nome = v.name ?? v.optionName;
-      const votantes = v.voterNames ?? v.voters;
-      return nome != null && (votantes == null || (Array.isArray(votantes) && votantes.length > 0));
-    });
+  } else if (body.pollVote != null || tipoMsg === "pollvote" || tipoMsg === "pollupdate") {
+    // Voto de enquete. Z-API envia body.pollVote.options[].name (seleção única → [0]).
+    // Polls não têm ID separado — a opção selecionada é o próprio texto (label do produto).
+    console.log("[yapa:pollVote]", JSON.stringify(body.pollVote ?? body.pollUpdateMessage));
+    const pv = (body.pollVote ?? body.pollUpdateMessage) as Record<string, unknown> | undefined;
+    const options =
+      ((pv?.options ?? pv?.votes ?? pv?.values) as Array<Record<string, unknown>> | undefined) ?? [];
+    const votado = options.find((v) => (v.name ?? v.optionName) != null) ?? options[0];
     texto        = String(votado?.name ?? votado?.optionName ?? "");
     textoEntidade = texto;
     respostaInterativa = texto.length > 0;
+    console.log("[yapa:poll]", { tipoMsg, texto, phone: phone.slice(-4) });
   } else {
     // Mensagem de texto comum.
     texto =

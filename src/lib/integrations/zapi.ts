@@ -86,7 +86,11 @@ export function enviarBotoes(
 
 /**
  * Envia uma enquete nativa do WhatsApp — máx. 12 opções, seleção única.
- * O voto chega de volta como webhook `type: "PollUpdate"`.
+ *
+ * Formato Z-API (send-poll): `message` (pergunta), `poll` (array de {name}),
+ * `pollMaxOptions` (qtde selecionável). O voto volta no webhook como
+ * `body.pollVote.options[].name` (NÃO como pollUpdateMessage.votes).
+ * Ref.: https://developer.z-api.io/en/message/send-poll
  */
 export function enviarPoll(
   phone: string,
@@ -96,9 +100,9 @@ export function enviarPoll(
 ) {
   return post("send-poll", {
     phone: phone.replace(/\D/g, ""),
-    name: titulo,
-    values: opcoes,
-    selectableCount: 1,
+    message: titulo,
+    poll: opcoes.map((nome) => ({ name: nome })),
+    pollMaxOptions: 1,
   }, cfg);
 }
 
