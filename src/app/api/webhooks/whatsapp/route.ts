@@ -177,8 +177,14 @@ export async function POST(request: Request) {
       // sessoes_whatsapp.no_atual_id é usado apenas como backup de sessão para o carrinho.
       // Isso garante que o estado de navegação persiste mesmo se sessoes_whatsapp falhar.
       const estadoConversa = conversa?.fluxo_estado ?? null;
+
+      // Palavras-chave de reinício: qualquer uma delas começa o fluxo do zero,
+      // independente do estado salvo. Útil quando o cliente se perde no meio do fluxo.
+      const textoNorm = texto.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const ehReinicio = !respostaInterativa && ["oi", "ola", "menu", "inicio", "reiniciar", "comecar", "ola", "hey", "hi", "hello"].includes(textoNorm);
+
       const estado: FluxoEstado | null =
-        estadoConversa?.no_atual && getNode(estadoConversa.no_atual)
+        !ehReinicio && estadoConversa?.no_atual && getNode(estadoConversa.no_atual)
           ? estadoConversa
           : null;
 
