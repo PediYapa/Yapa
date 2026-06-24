@@ -161,15 +161,23 @@ export function executarFluxo(
         return resultado(espera.id, false);
       }
 
-      // Se o nó de botões salva a escolha em contexto (ex.: formato Caixa/Unidade)
+      // Nós "salvar e continuar" (salvar_em_contexto, ex.: formato Caixa/Unidade):
+      // todas as opções normalmente convergem para o MESMO próximo nó (a captura).
+      // Salva a escolha no contexto E preserva a aresta de saída: usa a aresta
+      // específica do botão se existir, senão cai na aresta padrão do nó. Isso evita
+      // o loop quando ambos os botões apontam para o mesmo destino e só uma aresta
+      // (ou nenhuma) foi conectada por handle no builder.
       if (espera.data.salvar_em_contexto) {
         const ctxAtual = estado.contexto ?? {};
         contexto_patch = { ...ctxAtual, [espera.data.salvar_em_contexto]: escolhido.label };
+        atual = proximoPorHandle(espera.id, escolhido.id) ?? proximoPadrao(espera.id);
+      } else {
+        // Botões de ramificação (ex.: gate de idade): cada opção tem destino próprio.
+        atual = proximoPorHandle(espera.id, escolhido.id);
       }
 
-      atual = proximoPorHandle(espera.id, escolhido.id);
       if (!atual) {
-        console.warn("[yapa:engine] sourceHandle não encontrado para botão:", escolhido.id, "no nó:", espera.id);
+        console.warn("[yapa:engine] sem aresta de saída para botão:", escolhido.id, "no nó:", espera.id);
         envios.push({ tipo: "botoes", texto: espera.data.texto || "Escolha uma das opções:", botoes: espera.data.botoes ?? [] });
         return resultado(espera.id, false);
       }
