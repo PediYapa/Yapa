@@ -128,7 +128,11 @@ export function executarFluxo(
     return edge ? getNode(edge.target) : undefined;
   };
   const proximoPorHandle = (fromId: string, handle: string): FluxoNode | undefined => {
-    const edge = edges.find((e) => e.source === fromId && e.sourceHandle === handle);
+    // Casa por sourceHandle (canônico) OU por data.origemOpcaoId (espelho), para o caso
+    // de o sourceHandle ter sido perdido em algum round-trip de import/export.
+    const edge = edges.find(
+      (e) => e.source === fromId && (e.sourceHandle === handle || e.data?.origemOpcaoId === handle),
+    );
     return edge ? getNode(edge.target) : undefined;
   };
 
@@ -177,7 +181,15 @@ export function executarFluxo(
       }
 
       if (!atual) {
-        console.warn("[yapa:engine] sem aresta de saída para botão:", escolhido.id, "no nó:", espera.id);
+        // Diagnóstico decisivo: distingue "aresta inexistente" de "aresta existe mas destino sumiu".
+        const arestasDoNo = edges
+          .filter((e) => e.source === espera.id)
+          .map((e) => ({ sourceHandle: e.sourceHandle, origem: e.data?.origemOpcaoId, target: e.target, alvoExiste: !!getNode(e.target) }));
+        console.warn("[yapa:engine] sem destino para botão:", escolhido.id, "no nó:", espera.id, {
+          arestasDoNo,
+          totalNos: nodes.length,
+          idsNos: nodes.map((n) => n.id),
+        });
         envios.push({ tipo: "botoes", texto: espera.data.texto || "Escolha uma das opções:", botoes: espera.data.botoes ?? [] });
         return resultado(espera.id, false);
       }
