@@ -25,19 +25,17 @@ type DistribuidoraOption = { id: string; nome: string };
 const CATEGORIAS: { value: ProdutoCategoria; label: string }[] = [
   { value: "cerveja", label: "Cerveja" },
   { value: "destilado", label: "Destilado" },
-  { value: "pod", label: "Pod" },
-  { value: "vape", label: "Vape" },
-  { value: "voucher", label: "Voucher" },
-  { value: "outro", label: "Outro" },
+  { value: "pod", label: "Pod / Cigarro Eletrônico" },
+  { value: "conveniencia", label: "Conveniência" },
+  { value: "combo", label: "Combo Promocional" },
 ];
 
 const CATEGORIA_LABEL: Record<ProdutoCategoria, string> = {
   cerveja: "Cerveja",
   destilado: "Destilado",
-  pod: "Pod",
-  vape: "Vape",
-  voucher: "Voucher",
-  outro: "Outro",
+  pod: "Pod / Cigarro Eletrônico",
+  conveniencia: "Conveniência",
+  combo: "Combo Promocional",
 };
 
 function SubmitButton() {
@@ -63,7 +61,7 @@ export function ProdutosClient({
   const [removerImagem, setRemoverImagem] = useState(false);
   // Categoria controlada → renderização condicional dos campos (caixa / sabores).
   const [categoria, setCategoria] = useState<ProdutoCategoria>("cerveja");
-  // Sabores (pods/vapes) como tags editáveis.
+  // Sabores (pods) como tags editáveis.
   const [sabores, setSabores] = useState<string[]>([]);
   const [saborInput, setSaborInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -291,8 +289,8 @@ export function ProdutosClient({
               </>
             )}
 
-            {/* Pod/Vape: sabores como tags */}
-            {(categoria === "pod" || categoria === "vape") && (
+            {/* Pod: sabores como tags */}
+            {categoria === "pod" && (
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="sabor_input">Sabores / variações</Label>
                 <input type="hidden" name="opcoes_variacao" value={sabores.join(",")} />

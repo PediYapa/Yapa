@@ -8,12 +8,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 const schema = z.object({
   id: z.string().uuid().optional(),
   nome: z.string().trim().min(1, "Nome obrigatório").max(120),
-  categoria: z.enum(["cerveja", "destilado", "pod", "vape", "voucher", "outro"]),
+  categoria: z.enum(["cerveja", "destilado", "pod", "conveniencia", "combo"]),
   preco_gs: z.coerce.number().min(0, "Preço inválido"),
   // Cervejas: preço/qtd da caixa. Opcionais — vazio = vende só por unidade.
   preco_caixa: z.coerce.number().min(0, "Preço da caixa inválido").optional(),
   unidades_por_caixa: z.coerce.number().int().min(1, "Unidades por caixa inválido").optional(),
-  // Pods/vapes: sabores. Lista de strings (já parseada de texto em parse()).
+  // Pods: sabores. Lista de strings (já parseada de texto em parse()).
   opcoes_variacao: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   distribuidora_id: z.string().uuid().optional(),
   disponivel: z.coerce.boolean(),
@@ -90,9 +90,8 @@ export async function salvarProduto(_prev: ActionResult | undefined, formData: F
       // Caixa só faz sentido para cerveja; nas demais categorias grava null.
       preco_caixa: data.categoria === "cerveja" ? data.preco_caixa ?? null : null,
       unidades_por_caixa: data.categoria === "cerveja" ? data.unidades_por_caixa ?? null : null,
-      // Variações só para pod/vape; nas demais grava null.
-      opcoes_variacao:
-        data.categoria === "pod" || data.categoria === "vape" ? data.opcoes_variacao ?? null : null,
+      // Variações só para pod; nas demais grava null.
+      opcoes_variacao: data.categoria === "pod" ? data.opcoes_variacao ?? null : null,
       distribuidora_id: data.distribuidora_id ?? null,
       disponivel: data.disponivel,
       descricao: data.descricao || null,

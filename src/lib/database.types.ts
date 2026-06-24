@@ -10,7 +10,7 @@
  */
 
 export type UserRole = "owner" | "gerente" | "operador";
-export type ProdutoCategoria = "cerveja" | "destilado" | "pod" | "vape" | "voucher" | "outro";
+export type ProdutoCategoria = "cerveja" | "destilado" | "pod" | "conveniencia" | "combo";
 export type PedidoStatus =
   | "recebido" | "aguardando_pagamento" | "pago" | "roteado" | "em_separacao"
   | "despachado" | "em_entrega" | "entregue" | "cancelado" | "estornado" | "quebra";

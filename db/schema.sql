@@ -94,9 +94,10 @@ create table if not exists yapa.distribuidoras (
 create index if not exists idx_distribuidoras_org on yapa.distribuidoras(org_id) where deleted_at is null;
 
 -- ---------------------------------------------------------------------------
--- Produtos / catálogo (bebidas, pods, vape, vouchers)
+-- Produtos / catálogo (cervejas, destilados, pods, conveniência, combos)
 -- ---------------------------------------------------------------------------
-create type yapa.produto_categoria as enum ('cerveja', 'destilado', 'pod', 'vape', 'voucher', 'outro');
+-- 'vape' é legado/descontinuado na aplicação (mantido só para instalações antigas).
+create type yapa.produto_categoria as enum ('cerveja', 'destilado', 'pod', 'conveniencia', 'combo', 'vape');
 
 create table if not exists yapa.produtos (
   id uuid primary key default gen_random_uuid(),
