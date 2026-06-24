@@ -61,6 +61,11 @@ export function ProdutosClient({
   // preview da imagem no diálogo: string = URL a exibir, null = sem imagem
   const [preview, setPreview] = useState<string | null>(null);
   const [removerImagem, setRemoverImagem] = useState(false);
+  // Categoria controlada → renderização condicional dos campos (caixa / sabores).
+  const [categoria, setCategoria] = useState<ProdutoCategoria>("cerveja");
+  // Sabores (pods/vapes) como tags editáveis.
+  const [sabores, setSabores] = useState<string[]>([]);
+  const [saborInput, setSaborInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [state, formAction] = useActionState<ActionResult | undefined, FormData>(salvarProduto, undefined);
 
@@ -84,13 +89,31 @@ export function ProdutosClient({
     setEditando(null);
     setPreview(null);
     setRemoverImagem(false);
+    setCategoria("cerveja");
+    setSabores([]);
+    setSaborInput("");
     setAberto(true);
   }
   function editar(p: ProdutoRow) {
     setEditando(p);
     setPreview(p.imagem_url);
     setRemoverImagem(false);
+    setCategoria(p.categoria);
+    setSabores(p.opcoes_variacao ?? []);
+    setSaborInput("");
     setAberto(true);
+  }
+
+  function adicionarSabor() {
+    const novos = saborInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s && !sabores.includes(s));
+    if (novos.length) setSabores((atual) => [...atual, ...novos]);
+    setSaborInput("");
+  }
+  function removerSabor(s: string) {
+    setSabores((atual) => atual.filter((x) => x !== s));
   }
 
   function onSelecionarArquivo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -168,11 +191,26 @@ export function ProdutosClient({
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="font-medium">{p.nome}</TableCell>
+                  <TableCell className="font-medium">
+                    {p.nome}
+                    {p.opcoes_variacao && p.opcoes_variacao.length > 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({p.opcoes_variacao.length} sabores)
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="primary">{CATEGORIA_LABEL[p.categoria]}</Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{gs(p.preco_gs)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {gs(p.preco_gs)}
+                    {p.preco_caixa != null && (
+                      <span className="block text-xs text-muted-foreground">
+                        cx {gs(p.preco_caixa)}
+                        {p.unidades_por_caixa ? ` /${p.unidades_por_caixa}un` : ""}
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={p.disponivel ? "success" : "outline"}>
                       {p.disponivel ? "Disponível" : "Indisponível"}
@@ -207,16 +245,99 @@ export function ProdutosClient({
             </div>
             <div className="space-y-2">
               <Label htmlFor="categoria">Categoria *</Label>
-              <Select id="categoria" name="categoria" required defaultValue={editando?.categoria ?? "cerveja"}>
+              <Select
+                id="categoria"
+                name="categoria"
+                required
+                value={categoria}
+                onChange={(e) => setCategoria(e.target.value as ProdutoCategoria)}
+              >
                 {CATEGORIAS.map((c) => (
                   <option key={c.value} value={c.value}>{c.label}</option>
                 ))}
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preco_gs">Preço (₲) *</Label>
+              <Label htmlFor="preco_gs">Preço por unidade (₲) *</Label>
               <Input id="preco_gs" name="preco_gs" type="number" step="1" required defaultValue={editando?.preco_gs ?? ""} placeholder="0" />
             </div>
+
+            {/* Cerveja: preço e quantidade por caixa */}
+            {categoria === "cerveja" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="preco_caixa">Preço da caixa (₲)</Label>
+                  <Input
+                    id="preco_caixa"
+                    name="preco_caixa"
+                    type="number"
+                    step="1"
+                    defaultValue={editando?.preco_caixa ?? ""}
+                    placeholder="vazio = só unidade"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="unidades_por_caixa">Unidades por caixa</Label>
+                  <Input
+                    id="unidades_por_caixa"
+                    name="unidades_por_caixa"
+                    type="number"
+                    step="1"
+                    min="1"
+                    defaultValue={editando?.unidades_por_caixa ?? ""}
+                    placeholder="ex.: 12"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Pod/Vape: sabores como tags */}
+            {(categoria === "pod" || categoria === "vape") && (
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="sabor_input">Sabores / variações</Label>
+                <input type="hidden" name="opcoes_variacao" value={sabores.join(",")} />
+                <div className="flex gap-2">
+                  <Input
+                    id="sabor_input"
+                    value={saborInput}
+                    onChange={(e) => setSaborInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        adicionarSabor();
+                      }
+                    }}
+                    placeholder="Digite um sabor e Enter (ou separe por vírgula)"
+                  />
+                  <Button type="button" variant="outline" onClick={adicionarSabor}>
+                    <Plus /> Add
+                  </Button>
+                </div>
+                {sabores.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {sabores.map((s) => (
+                      <span
+                        key={s}
+                        className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
+                      >
+                        {s}
+                        <button
+                          type="button"
+                          onClick={() => removerSabor(s)}
+                          className="text-muted-foreground hover:text-destructive"
+                          aria-label={`Remover ${s}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  No WhatsApp, o bot vai perguntar o sabor antes da quantidade.
+                </p>
+              </div>
+            )}
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="distribuidora_id">Distribuidora</Label>
               <Select id="distribuidora_id" name="distribuidora_id" defaultValue={editando?.distribuidora_id ?? ""}>

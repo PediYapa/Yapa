@@ -103,7 +103,10 @@ create table if not exists yapa.produtos (
   org_id uuid not null references yapa.orgs on delete cascade,
   nome text not null,
   categoria yapa.produto_categoria not null default 'cerveja',
-  preco_gs numeric(14,2) not null default 0,
+  preco_gs numeric(14,2) not null default 0,         -- preço por unidade
+  preco_caixa numeric(14,2),                          -- preço da caixa fechada (cervejas); null = só unidade
+  unidades_por_caixa integer,                         -- unidades por caixa
+  opcoes_variacao text[],                             -- sabores/variações (pods/vapes); null = sem variação
   distribuidora_id uuid references yapa.distribuidoras on delete set null, -- null = catálogo global
   disponivel boolean not null default true,
   descricao text,

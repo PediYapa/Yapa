@@ -170,10 +170,20 @@ export async function POST(request: Request) {
       if (produtoIds.length) {
         const { data: prods } = await admin
           .from("produtos")
-          .select("id, nome, preco_gs, imagem_url")
+          .select("id, nome, preco_gs, imagem_url, preco_caixa, unidades_por_caixa, opcoes_variacao")
           .in("id", produtoIds);
         produtosMap = new Map(
-          (prods ?? []).map((p) => [p.id, { nome: p.nome, preco_gs: p.preco_gs, imagem_url: p.imagem_url }]),
+          (prods ?? []).map((p) => [
+            p.id,
+            {
+              nome: p.nome,
+              preco_gs: p.preco_gs,
+              imagem_url: p.imagem_url,
+              preco_caixa: p.preco_caixa,
+              unidades_por_caixa: p.unidades_por_caixa,
+              opcoes_variacao: p.opcoes_variacao,
+            },
+          ]),
         );
       }
 

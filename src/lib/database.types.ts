@@ -90,6 +90,9 @@ export type ProdutoRow = {
   nome: string;
   categoria: ProdutoCategoria;
   preco_gs: number;
+  preco_caixa: number | null;
+  unidades_por_caixa: number | null;
+  opcoes_variacao: string[] | null;
   distribuidora_id: string | null;
   disponivel: boolean;
   descricao: string | null;

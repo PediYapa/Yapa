@@ -23,7 +23,34 @@ export type EnvioFluxo =
   | { tipo: "imagem"; imagem_url: string; caption?: string }
   | { tipo: "botoes"; texto: string; botoes: FluxoBotao[] };
 
-export type ProdutoInfo = { nome: string; preco_gs: number; imagem_url: string | null };
+export type ProdutoInfo = {
+  nome: string;
+  preco_gs: number;
+  imagem_url: string | null;
+  // Caixa (cervejas) e variações (pods/vapes) — usados pelo funil de carrinho.
+  preco_caixa?: number | null;
+  unidades_por_caixa?: number | null;
+  opcoes_variacao?: string[] | null;
+};
+
+/**
+ * TODO — Funil de variação (sabores) no WhatsApp.
+ *
+ * Quando o cliente escolhe um produto com `opcoes_variacao` (ex.: Pod com
+ * [Menta, Morango, Uva]), o fluxo deve, ANTES de pedir a quantidade:
+ *   1. Pausar e perguntar "Qual sabor?" — enviar as opções como botões (≤3) ou
+ *      enquete (4–12), reusando montarListaEntidade/enviarPoll do webhook.
+ *   2. Guardar a escolha em contexto.variacao (análogo a contexto.formato).
+ *   3. Seguir para o nó "captura" de quantidade, que finaliza o item incluindo
+ *      `variacao` no CarrinhoItem.
+ *
+ * Estrutura prevista (a fiar na próxima etapa, junto com o webhook):
+ *   - CarrinhoItem ganha `variacao?: string`.
+ *   - O nó "produto" com pede_quantidade detecta opcoes_variacao e injeta um passo
+ *     intermediário de seleção de sabor (nó virtual ou roteamento condicional).
+ *   - O webhook resolve a lista de sabores de produtoInfo.opcoes_variacao.
+ * Mantém o engine puro: o webhook continua dono do I/O (DB + envio Z-API).
+ */
 
 export type ResultadoFluxo = {
   envios: EnvioFluxo[];
