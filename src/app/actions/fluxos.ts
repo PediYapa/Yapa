@@ -15,9 +15,10 @@ const nodeSchema = z.object({
     texto: z.string().max(2000).optional(),
     imagem_url: z.string().max(2000).optional(),
     produto_id: z.string().optional(),
-    botoes: z.array(botaoSchema).max(3).optional(),
+    botoes: z.array(botaoSchema).max(12).optional(), // ≤3 vira botões; 4–12 vira enquete no envio
     link_url: z.string().max(2000).optional(),
-    // "produto": funil de quantidade
+    // "produto": filtro de categoria do catálogo + funil de quantidade
+    categoria: z.enum(["cerveja", "destilado", "pod", "conveniencia", "combo"]).optional(),
     pede_quantidade: z.boolean().optional(),
     // "botoes": salva label clicado em contexto
     salvar_em_contexto: z.string().max(60).optional(),

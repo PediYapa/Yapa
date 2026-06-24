@@ -321,7 +321,7 @@ export function FluxosClient({
     const d = selNode?.data as FluxoNodeData | undefined;
     if (!d) return;
     const atuais = d.botoes ?? [];
-    if (atuais.length >= 3) return;
+    if (atuais.length >= 12) return; // ≤3 vira botões; 4–12 vira enquete no envio
     patchSel({ botoes: [...atuais, { id: `btn-${crypto.randomUUID().split("-")[0]}`, label: `Opção ${atuais.length + 1}` }] });
   }
   function editBotao(id: string, label: string) {
@@ -364,7 +364,7 @@ export function FluxosClient({
                 ((b as Record<string, unknown>).id as string).trim().length > 0 &&
                 typeof (b as Record<string, unknown>).label === "string" &&
                 ((b as Record<string, unknown>).label as string).trim().length > 0)
-              .slice(0, 3)
+              .slice(0, 12)
               .map((b) => ({ id: b.id.trim(), label: b.label.trim() }))
           : undefined;
 
@@ -384,6 +384,9 @@ export function FluxosClient({
           // flags dos nós "produto" e "botoes"
           ...(rawData.pede_quantidade === true ? { pede_quantidade: true } : {}),
           ...(typeof rawData.salvar_em_contexto === "string" ? { salvar_em_contexto: rawData.salvar_em_contexto } : {}),
+          ...(["cerveja", "destilado", "pod", "conveniencia", "combo"].includes(rawData.categoria as string)
+            ? { categoria: rawData.categoria as FluxoNodeData["categoria"] }
+            : {}),
         };
 
         return [{
@@ -756,13 +759,31 @@ function NoInspector({
       {d.tipo === "produto" && (
         <>
           <div className="space-y-1">
-            <Label>Produto do catálogo</Label>
+            <Label>Filtrar por categoria (modo catálogo)</Label>
+            <Select
+              value={d.categoria ?? ""}
+              onChange={(e) => onPatch({ categoria: (e.target.value || undefined) as FluxoNodeData["categoria"] })}
+              disabled={!canWrite}
+            >
+              <option value="">Todas as categorias</option>
+              <option value="cerveja">Cerveja</option>
+              <option value="destilado">Destilado</option>
+              <option value="pod">Pod / Cigarro Eletrônico</option>
+              <option value="conveniencia">Conveniência</option>
+              <option value="combo">Combo Promocional</option>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Sem produto fixo abaixo, o bot lista o catálogo desta categoria (menu por categoria).
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label>Produto fixo (opcional)</Label>
             <Select
               value={d.produto_id ?? ""}
               onChange={(e) => onPatch({ produto_id: e.target.value || undefined })}
               disabled={!canWrite}
             >
-              <option value="">Selecione…</option>
+              <option value="">Sem produto fixo (usa o catálogo)</option>
               {produtos.map((p) => (
                 <option key={p.id} value={p.id}>{p.nome}</option>
               ))}
@@ -826,7 +847,8 @@ function NoInspector({
             <Textarea value={d.texto ?? ""} onChange={(e) => onPatch({ texto: e.target.value })} disabled={!canWrite} />
           </div>
           <div className="space-y-2">
-            <Label>Botões (máx. 3)</Label>
+            <Label>Opções (máx. 12)</Label>
+            <p className="text-xs text-muted-foreground">Até 3 viram botões; de 4 a 12 viram enquete no WhatsApp.</p>
             {(d.botoes ?? []).map((b: FluxoBotao) => (
               <div key={b.id} className="flex items-center gap-1">
                 <Input value={b.label} onChange={(e) => onEditBotao(b.id, e.target.value)} disabled={!canWrite} className="h-9" />
@@ -837,11 +859,11 @@ function NoInspector({
                 )}
               </div>
             ))}
-            {canWrite && (d.botoes ?? []).length < 3 && (
-              <Button variant="outline" size="sm" onClick={onAddBotao}><Plus /> Botão</Button>
+            {canWrite && (d.botoes ?? []).length < 12 && (
+              <Button variant="outline" size="sm" onClick={onAddBotao}><Plus /> Opção</Button>
             )}
             <p className="text-xs text-muted-foreground">
-              Cada botão tem uma saída própria — conecte ao passo correspondente.
+              Cada opção tem uma saída própria — conecte ao passo correspondente.
             </p>
           </div>
           <div className="space-y-1">

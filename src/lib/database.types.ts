@@ -238,6 +238,8 @@ export type FluxoNodeData = {
   tipo_valor?: "numero" | "texto";
   min_valor?: number;
   max_valor?: number;
+  // Nó "produto" (catálogo): filtra a lista por categoria. Vazio = todas.
+  categoria?: ProdutoCategoria;
 };
 
 export type FluxoNode = {

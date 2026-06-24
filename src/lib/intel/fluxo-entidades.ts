@@ -16,7 +16,7 @@ import "server-only";
  */
 import { gs } from "@/lib/format";
 import type { createAdminClient } from "@/lib/supabase/admin";
-import type { FluxoNode } from "@/lib/database.types";
+import type { FluxoNode, ProdutoCategoria } from "@/lib/database.types";
 import type { EntidadeTipo } from "@/lib/intel/fluxo-engine";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -40,14 +40,20 @@ const LIMITE_POLL   = 12; // WhatsApp: máx. 12 opções em enquete
 type ProdutoSel = { id: string; nome: string; preco_gs: number };
 
 /** Produtos disponíveis da org, na MESMA ordem usada para montar a lista (por nome). */
-async function consultarProdutosDisponiveis(admin: AdminClient, orgId: string): Promise<ProdutoSel[]> {
-  const { data, error } = await admin
+async function consultarProdutosDisponiveis(
+  admin: AdminClient,
+  orgId: string,
+  categoria?: ProdutoCategoria,
+): Promise<ProdutoSel[]> {
+  let q = admin
     .from("produtos")
     .select("id, nome, preco_gs")
     .eq("org_id", orgId)
     .eq("disponivel", true)
-    .is("deleted_at", null)
-    .order("nome");
+    .is("deleted_at", null);
+  // Filtro opcional por categoria (menu → produtos daquela categoria).
+  if (categoria) q = q.eq("categoria", categoria);
+  const { data, error } = await q.order("nome");
   if (error) throw error;
   return data ?? [];
 }
@@ -101,7 +107,8 @@ export async function montarListaEntidade(
   try {
     switch (tipo) {
       case "produto": {
-        const rows = await consultarProdutosDisponiveis(admin, orgId);
+        // Filtra pela categoria do nó (se definida) — viabiliza o menu por categoria.
+        const rows = await consultarProdutosDisponiveis(admin, orgId, node.data.categoria);
         const labels = rows.map((p) => `${p.nome} - ${gs(p.preco_gs)}`);
         return resolverModo(node, labels, "O que você quer pedir?", "Nenhum produto disponível no momento.");
       }
@@ -137,8 +144,8 @@ export async function montarListaEntidade(
   }
 }
 
-/** Item escolhido pelo cliente (id real + preço-base em GS, snapshot p/ o carrinho). */
-export type ItemSelecionado = { produto_id: string; preco: number };
+/** Item escolhido pelo cliente (id real + nome + preço-base em GS, snapshot p/ o carrinho). */
+export type ItemSelecionado = { produto_id: string; nome: string; preco: number };
 
 /**
  * Mapeia a resposta do cliente (clique/voto ou número digitado) de volta ao produto
@@ -159,15 +166,15 @@ export async function resolverSelecaoProduto(
     // 1) Por índice (fallback de texto numerado).
     if (selecao.indice != null && selecao.indice >= 1 && selecao.indice <= rows.length) {
       const r = rows[selecao.indice - 1];
-      return { produto_id: r.id, preco: r.preco_gs };
+      return { produto_id: r.id, nome: r.nome, preco: r.preco_gs };
     }
     // 2) Por label exato (botão/enquete devolvem o texto que montamos).
     const alvo = selecao.texto.trim();
     const porLabel = rows.find((r) => `${r.nome} - ${gs(r.preco_gs)}` === alvo);
-    if (porLabel) return { produto_id: porLabel.id, preco: porLabel.preco_gs };
+    if (porLabel) return { produto_id: porLabel.id, nome: porLabel.nome, preco: porLabel.preco_gs };
     // 3) Por nome (robustez: WhatsApp pode truncar labels longos).
     const porNome = rows.find((r) => alvo === r.nome || alvo.startsWith(r.nome));
-    if (porNome) return { produto_id: porNome.id, preco: porNome.preco_gs };
+    if (porNome) return { produto_id: porNome.id, nome: porNome.nome, preco: porNome.preco_gs };
 
     return null;
   } catch {

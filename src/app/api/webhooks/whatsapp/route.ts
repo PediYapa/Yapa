@@ -54,6 +54,8 @@ export async function POST(request: Request) {
   let texto = "";
   let textoEntidade = "";
   let respostaInterativa = false;
+  // Localização recebida (PIN do WhatsApp) — consumida pelo nó location_capture do engine.
+  let localizacao: { latitude: number; longitude: number; endereco?: string } | null = null;
 
   // Detecta resposta de botão/lista pelo CONTEÚDO do body, não só pelo type.
   // Z-API pode enviar type="ReceivedCallback", "ButtonsResponse", "LIST_RESPONSE", etc.
@@ -90,6 +92,19 @@ export async function POST(request: Request) {
     textoEntidade = texto;
     respostaInterativa = texto.length > 0;
     console.log("[yapa:poll]", { tipoMsg, texto, phone: phone.slice(-4) });
+  } else if (body.location != null || tipoMsg === "location") {
+    // Localização (PIN). Z-API: body.location = { latitude, longitude, address, url }.
+    const loc = body.location as Record<string, unknown> | undefined;
+    const lat = Number(loc?.latitude);
+    const lng = Number(loc?.longitude);
+    const endereco = typeof loc?.address === "string" ? loc.address.trim() : "";
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      localizacao = { latitude: lat, longitude: lng, ...(endereco ? { endereco } : {}) };
+      texto = endereco || `${lat},${lng}`;
+      textoEntidade = texto;
+      respostaInterativa = true;
+    }
+    console.log("[yapa:location]", { lat, lng, endereco, phone: phone.slice(-4) });
   } else {
     // Mensagem de texto comum.
     texto =
@@ -264,13 +279,12 @@ export async function POST(request: Request) {
           if (item) {
             if (noEspera.data.pede_quantidade) {
               // Funil de quantidade: guarda no contexto para o nó "captura" finalizar
-              const prodInfo = produtosMap.get(item.produto_id);
               contexto = {
                 ...contexto,
-                item_pendente: { produto_id: item.produto_id, nome: prodInfo?.nome ?? "", preco_gs: item.preco },
+                item_pendente: { produto_id: item.produto_id, nome: item.nome, preco_gs: item.preco },
               };
             } else {
-              carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco });
+              carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco, nome: item.nome });
             }
           }
         }
@@ -280,6 +294,7 @@ export async function POST(request: Request) {
           estado,
           texto,
           (id) => produtosMap.get(id),
+          localizacao,
         );
 
         // Aplica o patch de contexto retornado pelo engine (captura/botoes com salvar_em_contexto)
@@ -298,7 +313,18 @@ export async function POST(request: Request) {
           try {
             if (envio.tipo === "texto") await enviarTexto(phone, envio.texto, zapiCfg);
             else if (envio.tipo === "imagem") await enviarImagem(phone, envio.imagem_url, envio.caption, zapiCfg);
-            else await enviarBotoes(phone, envio.texto, envio.botoes, zapiCfg);
+            else if (envio.botoes.length > 3) {
+              // WhatsApp: send-button-list aceita só 3. Acima disso (ex.: menu de 5
+              // categorias) vai como enquete; com fallback de texto numerado se falhar.
+              const labels = envio.botoes.map((b) => b.label);
+              const pollResult = await enviarPoll(phone, envio.texto, labels, zapiCfg);
+              if (!pollResult.ok) {
+                const corpo = labels.map((l, i) => `${i + 1}. ${l}`).join("\n");
+                await enviarTexto(phone, `${envio.texto}\n\n${corpo}\n\nDigite o número da opção:`, zapiCfg);
+              }
+            } else {
+              await enviarBotoes(phone, envio.texto, envio.botoes, zapiCfg);
+            }
           } catch {
             /* não-bloqueante */
           }

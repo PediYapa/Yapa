@@ -142,11 +142,15 @@ function getItemPendente(ctx: Record<string, unknown>): ItemPendente | undefined
   return { produto_id: r.produto_id, nome: r.nome, preco_gs: r.preco_gs };
 }
 
+/** Localização recebida do WhatsApp (PIN). O webhook extrai e passa ao engine. */
+export type LocalizacaoRecebida = { latitude: number; longitude: number; endereco?: string };
+
 export function executarFluxo(
   fluxo: { nodes: FluxoNode[]; edges: FluxoEdge[] },
   estado: FluxoEstado | null,
   texto: string,
   resolveProduto: (id: string) => ProdutoInfo | undefined,
+  localizacao?: LocalizacaoRecebida | null,
 ): ResultadoFluxo {
   const { nodes, edges } = fluxo;
   const getNode = (id: string) => nodes.find((n) => n.id === id);
@@ -268,6 +272,31 @@ export function executarFluxo(
       atual = proximoPadrao(espera.id);
       if (!atual) return resultado(null, false);
 
+    } else if (espera?.data.tipo === "location_capture") {
+      // Aguardando localização. Aceita o PIN (lat/lng) OU endereço digitado.
+      const ctxAtual = estado.contexto ?? {};
+      if (localizacao) {
+        contexto_patch = {
+          ...ctxAtual,
+          latitude: localizacao.latitude,
+          longitude: localizacao.longitude,
+          ...(localizacao.endereco ? { endereco: localizacao.endereco } : {}),
+        };
+        atual = proximoPadrao(espera.id);
+        if (!atual) return resultado(null, false);
+      } else if (texto.trim()) {
+        // Cliente digitou o endereço em vez de enviar o PIN.
+        contexto_patch = { ...ctxAtual, endereco: texto.trim() };
+        atual = proximoPadrao(espera.id);
+        if (!atual) return resultado(null, false);
+      } else {
+        envios.push({
+          tipo: "texto",
+          texto: espera.data.texto || "Envie sua localização (PIN) pelo WhatsApp ou digite o endereço.",
+        });
+        return resultado(espera.id, false);
+      }
+
     } else if (espera) {
       atual = proximoPadrao(espera.id);
     }
@@ -300,6 +329,15 @@ export function executarFluxo(
     if (d.tipo === "captura") {
       // Envia a pergunta e pausa para aguardar a resposta livre
       if (d.texto) envios.push({ tipo: "texto", texto: d.texto });
+      return resultado(atual.id, handoff);
+    }
+
+    if (d.tipo === "location_capture") {
+      // Pede a localização e pausa até o cliente enviar o PIN (ou digitar o endereço).
+      envios.push({
+        tipo: "texto",
+        texto: d.texto || "Por favor, envie sua localização (PIN) pelo WhatsApp ou digite o endereço.",
+      });
       return resultado(atual.id, handoff);
     }
 
