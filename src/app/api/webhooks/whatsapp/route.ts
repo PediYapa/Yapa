@@ -121,6 +121,9 @@ export async function POST(request: Request) {
   const orgId = org.id;
   const agora = new Date().toISOString();
 
+  // .limit(1) é OBRIGATÓRIO: sem ele, .maybeSingle() ERRA quando há 2+ conversas
+  // não-arquivadas do mesmo telefone → retorna null → o webhook cria uma conversa
+  // nova a cada mensagem (loop de duplicatas, sempre reiniciando do "Bem-vindo").
   const { data: existente } = await admin
     .from("conversas")
     .select("*")
@@ -128,6 +131,7 @@ export async function POST(request: Request) {
     .eq("telefone", phone)
     .not("status", "eq", "arquivada")
     .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   // Usa textoEntidade no log (mais legível que o buttonId cru).
