@@ -230,34 +230,55 @@ export async function POST(request: Request) {
       };
 
       let novoNoAtual: string | null = estado?.no_atual ?? null;
+      // Contexto intermediário (item_pendente, formato, etc.) — sempre preservado no fluxo_estado.
+      let contexto: Record<string, unknown> = estado?.contexto ?? {};
 
       const noEspera = estado?.no_atual ? getNode(estado.no_atual) : undefined;
       const entEspera = noEspera ? tipoEntidadeDoNo(noEspera) : null;
-      // Para validação de seleção numérica, usa `texto` (que pode ser buttonId ou número digitado).
       const escolha = Number.parseInt(texto.trim(), 10);
       const selecaoValida = respostaInterativa || (Number.isInteger(escolha) && escolha >= 1);
 
       if (entEspera && noEspera && !selecaoValida) {
+        // Apresenta/reapresenta a lista de entidade; contexto é preservado
         await enviarLista(noEspera, entEspera);
         respondeuPorFluxo = true;
         novoNoAtual = noEspera.id;
       } else {
         if (entEspera === "produto" && noEspera && selecaoValida) {
-          // Fix #2 — usa textoEntidade (label do produto, e.g. "Cerveja - Gs. 15.000")
-          // para resolver o produto real; não o buttonId (e.g. "ent_0").
           const indice = respostaInterativa ? null : Number.isInteger(escolha) ? escolha : null;
           const item = await resolverSelecaoProduto(admin, orgId, { texto: textoEntidade, indice });
-          if (item) carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco });
+          if (item) {
+            if (noEspera.data.pede_quantidade) {
+              // Funil de quantidade: guarda no contexto para o nó "captura" finalizar
+              const prodInfo = produtosMap.get(item.produto_id);
+              contexto = {
+                ...contexto,
+                item_pendente: { produto_id: item.produto_id, nome: prodInfo?.nome ?? "", preco_gs: item.preco },
+              };
+            } else {
+              carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco });
+            }
+          }
         }
 
-        // `texto` aqui é o buttonId (para ButtonsResponse) — o engine usa casarBotao()
-        // que compara contra b.id antes de b.label, resolvendo a aresta pelo sourceHandle.
         const resultado = executarFluxo(
           { nodes: fluxo.nodes, edges: fluxo.edges },
           estado,
           texto,
           (id) => produtosMap.get(id),
         );
+
+        // Aplica o patch de contexto retornado pelo engine (captura/botoes com salvar_em_contexto)
+        if (resultado.contexto_patch !== undefined) {
+          contexto = resultado.contexto_patch;
+        }
+
+        // Acrescenta itens finalizados pelo engine (captura de quantidade)
+        if (resultado.adicionar_carrinho?.length) {
+          for (const item of resultado.adicionar_carrinho) {
+            carrinho.push(item);
+          }
+        }
 
         for (const envio of resultado.envios) {
           try {
@@ -285,6 +306,7 @@ export async function POST(request: Request) {
           envios: resultado.envios.length,
           no_atual_novo: resultado.no_atual ?? "null(encerrado)",
           handoff: resultado.handoff,
+          contexto_keys: Object.keys(contexto),
         });
 
         if (resultado.no_atual) {
@@ -296,11 +318,17 @@ export async function POST(request: Request) {
           }
         }
 
-        if (resultado.no_atual === null) carrinho.length = 0;
+        // Fluxo encerrado: limpa carrinho e contexto
+        if (resultado.no_atual === null) {
+          carrinho.length = 0;
+          contexto = {};
+        }
       }
 
+      // Persiste contexto junto com o estado de navegação (sem migration — já é JSONB)
+      const contextoFinal = Object.keys(contexto).length > 0 ? contexto : undefined;
       fluxoEstado = novoNoAtual
-        ? { fluxo_id: fluxo.id, no_atual: novoNoAtual, atualizado_em: agora }
+        ? { fluxo_id: fluxo.id, no_atual: novoNoAtual, atualizado_em: agora, ...(contextoFinal ? { contexto: contextoFinal } : {}) }
         : null;
 
       // Fix #1 — salvarSessao é awaited strictamente antes do return 200;

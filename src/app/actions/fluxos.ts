@@ -11,12 +11,21 @@ const nodeSchema = z.object({
   type: z.string().optional(),
   position: z.object({ x: z.number(), y: z.number() }),
   data: z.object({
-    tipo: z.enum(["inicio", "texto", "imagem", "botoes", "produto", "humano", "payment_dlocal", "external_link", "location_capture"]),
+    tipo: z.enum(["inicio", "texto", "imagem", "botoes", "produto", "humano", "payment_dlocal", "external_link", "location_capture", "captura"]),
     texto: z.string().max(2000).optional(),
     imagem_url: z.string().max(2000).optional(),
     produto_id: z.string().optional(),
-    botoes: z.array(botaoSchema).max(3).optional(), // WhatsApp: até 3 botões de resposta
+    botoes: z.array(botaoSchema).max(3).optional(),
     link_url: z.string().max(2000).optional(),
+    // "produto": funil de quantidade
+    pede_quantidade: z.boolean().optional(),
+    // "botoes": salva label clicado em contexto
+    salvar_em_contexto: z.string().max(60).optional(),
+    // "captura": captura texto livre
+    variavel: z.string().max(60).optional(),
+    tipo_valor: z.enum(["numero", "texto"]).optional(),
+    min_valor: z.number().min(0).max(9999).optional(),
+    max_valor: z.number().min(1).max(9999).optional(),
   }),
 });
 

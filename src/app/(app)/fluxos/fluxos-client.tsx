@@ -29,6 +29,7 @@ import {
   CreditCard,
   ExternalLink,
   MapPin,
+  Keyboard,
   Plus,
   Save,
   Trash2,
@@ -68,6 +69,7 @@ const META: Record<FluxoNoTipo, { label: string; icon: typeof Play; cor: string 
   payment_dlocal: { label: "Pagamento", icon: CreditCard, cor: "text-green-600" },
   external_link: { label: "Link Externo", icon: ExternalLink, cor: "text-blue-600" },
   location_capture: { label: "Localização", icon: MapPin, cor: "text-orange-600" },
+  captura: { label: "Captura", icon: Keyboard, cor: "text-indigo-600" },
 };
 
 /**
@@ -140,6 +142,15 @@ function NoCard({ data, selected }: NodeProps<NoFluxo>) {
         {d.tipo === "location_capture" && (
           <span className="line-clamp-2">{d.texto || "Solicita localização do cliente."}</span>
         )}
+        {d.tipo === "captura" && (
+          <div className="space-y-0.5">
+            <span className="line-clamp-2 text-foreground">{d.texto || "(sem pergunta)"}</span>
+            <span className="block text-indigo-500">
+              {d.variavel ? `→ contexto.${d.variavel}` : "(variável não definida)"}
+              {d.tipo_valor === "numero" ? ` (${d.min_valor ?? 1}–${d.max_valor ?? 99})` : ""}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Rótulos das ramificações: alinham visualmente cada botão ao seu handle. */}
@@ -182,7 +193,9 @@ function novoNo(tipo: FluxoNoTipo, i: number): NoFluxo {
   const data: FluxoNodeData =
     tipo === "botoes"
       ? { tipo, texto: "Escolha uma opção:", botoes: [{ id: `btn-${crypto.randomUUID().split("-")[0]}`, label: "Opção 1" }] }
-      : { tipo, texto: "" };
+      : tipo === "captura"
+        ? { tipo, texto: "Quantas unidades?", variavel: "quantidade", tipo_valor: "numero", min_valor: 1, max_valor: 99 }
+        : { tipo, texto: "" };
   return {
     id: crypto.randomUUID(),
     type: "noFluxo",
@@ -363,6 +376,14 @@ export function FluxosClient({
           ...(typeof rawData.produto_id === "string" ? { produto_id: rawData.produto_id } : {}),
           ...(typeof rawData.link_url === "string" ? { link_url: rawData.link_url } : {}),
           ...(botoes !== undefined ? { botoes } : {}),
+          // campos do nó "captura"
+          ...(typeof rawData.variavel === "string" ? { variavel: rawData.variavel } : {}),
+          ...(rawData.tipo_valor === "numero" || rawData.tipo_valor === "texto" ? { tipo_valor: rawData.tipo_valor } : {}),
+          ...(typeof rawData.min_valor === "number" ? { min_valor: rawData.min_valor } : {}),
+          ...(typeof rawData.max_valor === "number" ? { max_valor: rawData.max_valor } : {}),
+          // flags dos nós "produto" e "botoes"
+          ...(rawData.pede_quantidade === true ? { pede_quantidade: true } : {}),
+          ...(typeof rawData.salvar_em_contexto === "string" ? { salvar_em_contexto: rawData.salvar_em_contexto } : {}),
         };
 
         return [{
@@ -474,7 +495,7 @@ export function FluxosClient({
     }
   }
 
-  const PALETA: FluxoNoTipo[] = ["texto", "imagem", "botoes", "produto", "humano", "payment_dlocal", "external_link", "location_capture"];
+  const PALETA: FluxoNoTipo[] = ["texto", "imagem", "botoes", "captura", "produto", "humano", "payment_dlocal", "external_link", "location_capture"];
 
   return (
     <div>
@@ -768,6 +789,20 @@ function NoInspector({
             <Label>Texto adicional (opcional)</Label>
             <Textarea value={d.texto ?? ""} onChange={(e) => onPatch({ texto: e.target.value })} disabled={!canWrite} />
           </div>
+          <div className="space-y-1">
+            <Label>Pede quantidade antes de adicionar ao carrinho?</Label>
+            <Select
+              value={d.pede_quantidade ? "true" : "false"}
+              onChange={(e) => onPatch({ pede_quantidade: e.target.value === "true" || undefined })}
+              disabled={!canWrite}
+            >
+              <option value="false">Não — adiciona com quantidade 1</option>
+              <option value="true">Sim — funil Produto → Formato → Quantidade</option>
+            </Select>
+            {d.pede_quantidade && (
+              <p className="text-xs text-indigo-600">Conecte este nó a um "Botões" (formato) e depois a um "Captura" (quantidade=&quot;quantidade&quot;).</p>
+            )}
+          </div>
         </>
       )}
 
@@ -807,6 +842,18 @@ function NoInspector({
             )}
             <p className="text-xs text-muted-foreground">
               Cada botão tem uma saída própria — conecte ao passo correspondente.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label>Salvar escolha no contexto (opcional)</Label>
+            <Input
+              value={d.salvar_em_contexto ?? ""}
+              onChange={(e) => onPatch({ salvar_em_contexto: e.target.value || undefined })}
+              placeholder="ex: formato"
+              disabled={!canWrite}
+            />
+            <p className="text-xs text-muted-foreground">
+              Se preenchido, o label do botão clicado é salvo em contexto[chave]. Use <strong>formato</strong> para guardar Caixa/Unidade antes do nó Captura.
             </p>
           </div>
         </>
@@ -863,6 +910,68 @@ function NoInspector({
             Solicita ao cliente que compartilhe a localização via WhatsApp.
           </p>
         </div>
+      )}
+
+      {d.tipo === "captura" && (
+        <>
+          <div className="space-y-1">
+            <Label>Pergunta enviada ao cliente</Label>
+            <Textarea
+              value={d.texto ?? ""}
+              onChange={(e) => onPatch({ texto: e.target.value })}
+              placeholder="Ex.: Quantas unidades você quer?"
+              disabled={!canWrite}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Variável de destino</Label>
+            <Input
+              value={d.variavel ?? ""}
+              onChange={(e) => onPatch({ variavel: e.target.value })}
+              placeholder="quantidade"
+              disabled={!canWrite}
+            />
+            <p className="text-xs text-muted-foreground">
+              Salvo em contexto[variável]. Use <strong>quantidade</strong> para finalizar o carrinho automaticamente.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label>Tipo de valor esperado</Label>
+            <Select
+              value={d.tipo_valor ?? "numero"}
+              onChange={(e) => onPatch({ tipo_valor: e.target.value as "numero" | "texto" })}
+              disabled={!canWrite}
+            >
+              <option value="numero">Número inteiro (ex.: 3)</option>
+              <option value="texto">Texto livre</option>
+            </Select>
+          </div>
+          {(d.tipo_valor === "numero" || !d.tipo_valor) && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label>Mínimo</Label>
+                <Input
+                  type="number"
+                  value={d.min_valor ?? 1}
+                  onChange={(e) => onPatch({ min_valor: Number(e.target.value) || 1 })}
+                  disabled={!canWrite}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Máximo</Label>
+                <Input
+                  type="number"
+                  value={d.max_valor ?? 99}
+                  onChange={(e) => onPatch({ max_valor: Number(e.target.value) || 99 })}
+                  disabled={!canWrite}
+                />
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Aceita texto escrito: "quero três" → 3. O bot re-pergunta automaticamente se o valor for inválido.
+          </p>
+        </>
       )}
 
       {canWrite && d.tipo !== "inicio" && (

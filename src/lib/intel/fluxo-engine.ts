@@ -1,19 +1,22 @@
 /**
  * Motor de execução de fluxos do bot (puro, sem I/O — testável).
  *
- * Um fluxo é um grafo de nós (React Flow). Ao receber uma mensagem do cliente,
- * `executarFluxo` decide o que enviar e qual o próximo ponto de espera:
- *  - nós "texto"/"imagem"/"produto" emitem conteúdo e avançam sozinhos;
- *  - nó "botoes" emite e PARA, aguardando a resposta (o texto/escolha do cliente
- *    seleciona a aresta via sourceHandle = id do botão);
- *  - nó "humano" liga o handoff e encerra o fluxo;
- *  - nó "inicio" é só a entrada.
+ * Tipos de nó e comportamento:
+ *  - "texto"/"imagem"/"produto" — emitem conteúdo e avançam sozinhos.
+ *  - "botoes" — emite botões e PAUSA; resposta seleciona a aresta via sourceHandle.
+ *              Se `salvar_em_contexto` estiver definido, o label do botão clicado
+ *              é salvo em contexto[salvar_em_contexto] antes de avançar.
+ *  - "captura" — pausa e aguarda texto livre; quando recebido, extrai o valor
+ *               (número ou texto) e salva em contexto[variavel]. Se variavel="quantidade"
+ *               e contexto.item_pendente existir, finaliza o item do carrinho.
+ *  - "humano" — aciona handoff e encerra o fluxo.
+ *  - "inicio" — só entrada, não emite.
  *
- * O webhook resolve produtos num mapa e passa um resolvedor; assim o engine não
- * toca no banco.
+ * Retorna `contexto_patch` (webhook faz merge) e `adicionar_carrinho` (webhook acrescenta
+ * ao carrinho) para manter o engine livre de I/O.
  */
 import { gs } from "@/lib/format";
-import type { FluxoNode, FluxoEdge, FluxoBotao, FluxoEstado } from "@/lib/database.types";
+import type { FluxoNode, FluxoEdge, FluxoBotao, FluxoEstado, CarrinhoItem } from "@/lib/database.types";
 
 export type EnvioFluxo =
   | { tipo: "texto"; texto: string }
@@ -24,23 +27,19 @@ export type ProdutoInfo = { nome: string; preco_gs: number; imagem_url: string |
 
 export type ResultadoFluxo = {
   envios: EnvioFluxo[];
-  no_atual: string | null; // próximo ponto de espera; null = fluxo encerrado
+  no_atual: string | null;
   handoff: boolean;
+  /** Contexto completo a gravar em fluxo_estado.contexto (substitui, não faz merge parcial). */
+  contexto_patch?: Record<string, unknown>;
+  /** Itens a acrescentar ao carrinho (a ser feito pelo webhook). */
+  adicionar_carrinho?: CarrinhoItem[];
 };
 
 /** Tipo de entidade resolvida dinamicamente no banco (lista numerada no WhatsApp). */
 export type EntidadeTipo = "produto" | "hub" | "entregador";
 
-/**
- * Um nó é "de entidade" quando seu conteúdo vem do banco em tempo real:
- *  - "produto" SEM produto_id → catálogo (lista). COM produto_id → produto único (engine renderiza).
- *  - "hub"/"distribuidora" → lista de distribuidoras.
- *  - "entregador" → lista de entregadores.
- * Estes nós PAUSAM o fluxo; quem consulta o banco e renderiza a lista é o webhook.
- * (Pura: o engine não toca no banco — só classifica o nó.)
- */
 export function tipoEntidadeDoNo(node: FluxoNode): EntidadeTipo | null {
-  const tipo = node.data.tipo as string; // pode vir "hub"/"entregador" via JSON importado
+  const tipo = node.data.tipo as string;
   if (tipo === "produto") return node.data.produto_id ? null : "produto";
   if (tipo === "hub" || tipo === "distribuidora") return "hub";
   if (tipo === "entregador") return "entregador";
@@ -48,11 +47,7 @@ export function tipoEntidadeDoNo(node: FluxoNode): EntidadeTipo | null {
 }
 
 function normalizar(s: string): string {
-  return s
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+  return s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
 /** Casa a resposta do cliente com um botão (por label, id ou número da opção). */
@@ -60,14 +55,64 @@ function casarBotao(botoes: FluxoBotao[] | undefined, texto: string): FluxoBotao
   if (!botoes || botoes.length === 0) return undefined;
   const t = normalizar(texto);
   if (!t) return undefined;
-  // 1) match exato por label ou id
   const exato = botoes.find((b) => normalizar(b.label) === t || normalizar(b.id) === t);
   if (exato) return exato;
-  // 2) número da opção ("1", "2", ...)
   const n = Number.parseInt(t, 10);
   if (Number.isInteger(n) && n >= 1 && n <= botoes.length) return botoes[n - 1];
-  // 3) match parcial (cliente digitou parte do label)
   return botoes.find((b) => normalizar(b.label).includes(t) || t.includes(normalizar(b.label)));
+}
+
+/**
+ * Extrai um número inteiro positivo do texto do cliente.
+ * Aceita: "3", "quero 3", "duas", "deux", "3 caixas", etc.
+ */
+function extrairNumero(texto: string): number | null {
+  const norm = normalizar(texto);
+
+  // 1) Número literal no início ou em qualquer posição
+  const match = texto.match(/\d+/);
+  if (match) {
+    const n = parseInt(match[0], 10);
+    if (n > 0 && n <= 999) return n;
+  }
+
+  // 2) Números escritos em PT-BR e ES
+  const escritos: Record<string, number> = {
+    um: 1, uma: 1, uno: 1, un: 1,
+    dois: 2, duas: 2, dos: 2,
+    tres: 3, // já normalizado (sem acento)
+    quatro: 4, cuatro: 4,
+    cinco: 5,
+    seis: 6,
+    sete: 7, siete: 7,
+    oito: 8, ocho: 8,
+    nove: 9, nueve: 9,
+    dez: 10, diez: 10,
+    onze: 11, once: 11,
+    doze: 12, doce: 12,
+    treze: 13, trece: 13,
+    quatorze: 14, catorce: 14,
+    quinze: 15, quince: 15,
+    vinte: 20, veinte: 20,
+    trinta: 30, treinta: 30,
+    quarenta: 40, cuarenta: 40,
+    cinquenta: 50, cincuenta: 50,
+  };
+  for (const [palavra, valor] of Object.entries(escritos)) {
+    if (norm.includes(palavra)) return valor;
+  }
+
+  return null;
+}
+
+type ItemPendente = { produto_id: string; nome: string; preco_gs: number };
+
+function getItemPendente(ctx: Record<string, unknown>): ItemPendente | undefined {
+  const ip = ctx.item_pendente;
+  if (!ip || typeof ip !== "object") return undefined;
+  const r = ip as Record<string, unknown>;
+  if (typeof r.produto_id !== "string" || typeof r.nome !== "string" || typeof r.preco_gs !== "number") return undefined;
+  return { produto_id: r.produto_id, nome: r.nome, preco_gs: r.preco_gs };
 }
 
 export function executarFluxo(
@@ -88,74 +133,134 @@ export function executarFluxo(
   };
 
   const envios: EnvioFluxo[] = [];
+  let contexto_patch: Record<string, unknown> | undefined;
+  let adicionar_carrinho: CarrinhoItem[] | undefined;
   let atual: FluxoNode | undefined;
 
-  // 1) De onde começar a emitir.
+  // Helper: monta o ResultadoFluxo com os campos opcionais corretos
+  const resultado = (no_atual: string | null, handoff: boolean): ResultadoFluxo => ({
+    envios,
+    no_atual,
+    handoff,
+    ...(contexto_patch !== undefined ? { contexto_patch } : {}),
+    ...(adicionar_carrinho !== undefined ? { adicionar_carrinho } : {}),
+  });
+
+  // ─── 1) Determinar ponto de partida a partir do estado ───────────────────────
   if (estado?.no_atual) {
     const espera = getNode(estado.no_atual);
+
     if (espera?.data.tipo === "botoes") {
       const escolhido = casarBotao(espera.data.botoes, texto);
       if (!escolhido) {
-        // Log diagnóstico: mostra o que chegou vs o que estava esperando.
         console.warn("[yapa:engine] casarBotao falhou", {
           textoRecebido: texto,
           botoesEsperados: (espera.data.botoes ?? []).map((b) => ({ id: b.id, label: b.label })),
         });
-        envios.push({
-          tipo: "botoes",
-          texto: espera.data.texto || "Escolha uma das opções:",
-          botoes: espera.data.botoes ?? [],
-        });
-        return { envios, no_atual: espera.id, handoff: false };
+        envios.push({ tipo: "botoes", texto: espera.data.texto || "Escolha uma das opções:", botoes: espera.data.botoes ?? [] });
+        return resultado(espera.id, false);
       }
+
+      // Se o nó de botões salva a escolha em contexto (ex.: formato Caixa/Unidade)
+      if (espera.data.salvar_em_contexto) {
+        const ctxAtual = estado.contexto ?? {};
+        contexto_patch = { ...ctxAtual, [espera.data.salvar_em_contexto]: escolhido.label };
+      }
+
       atual = proximoPorHandle(espera.id, escolhido.id);
       if (!atual) {
-        // Botão reconhecido, mas aresta não configurada (sourceHandle ausente no JSON importado).
-        // Re-apresenta em vez de reiniciar do início, para não criar um loop invisível.
         console.warn("[yapa:engine] sourceHandle não encontrado para botão:", escolhido.id, "no nó:", espera.id);
-        envios.push({
-          tipo: "botoes",
-          texto: espera.data.texto || "Escolha uma das opções:",
-          botoes: espera.data.botoes ?? [],
-        });
-        return { envios, no_atual: espera.id, handoff: false };
+        envios.push({ tipo: "botoes", texto: espera.data.texto || "Escolha uma das opções:", botoes: espera.data.botoes ?? [] });
+        return resultado(espera.id, false);
       }
+
+    } else if (espera?.data.tipo === "captura") {
+      const d = espera.data;
+      const variavel = d.variavel || "valor";
+      const ctxAtual = estado.contexto ?? {};
+
+      let valorCapturado: string | number = texto.trim();
+
+      if (d.tipo_valor === "numero") {
+        const n = extrairNumero(texto);
+        const min = d.min_valor ?? 1;
+        const max = d.max_valor ?? 99;
+
+        if (n === null) {
+          envios.push({ tipo: "texto", texto: `Por favor, informe um número entre ${min} e ${max}.` });
+          return resultado(espera.id, false);
+        }
+        if (n < min || n > max) {
+          envios.push({ tipo: "texto", texto: `Por favor, informe entre ${min} e ${max}.` });
+          return resultado(espera.id, false);
+        }
+        valorCapturado = n;
+      }
+
+      // Monta o novo contexto com o valor capturado
+      const ctxNovo: Record<string, unknown> = { ...ctxAtual, [variavel]: valorCapturado };
+
+      // Se é "quantidade" e há um item pendente → finaliza o carrinho
+      if (variavel === "quantidade" && getItemPendente(ctxAtual)) {
+        const ip = getItemPendente(ctxAtual)!;
+        const formato = typeof ctxAtual.formato === "string" ? ctxAtual.formato : undefined;
+        adicionar_carrinho = [{
+          produto_id: ip.produto_id,
+          quantidade: valorCapturado as number,
+          preco: ip.preco_gs,
+          nome: ip.nome,
+          ...(formato ? { formato } : {}),
+        }];
+        // Limpa item_pendente e formato do contexto (item finalizado)
+        const { item_pendente: _ip, formato: _fmt, quantidade: _q, ...ctxLimpo } = ctxNovo;
+        contexto_patch = ctxLimpo;
+      } else {
+        contexto_patch = ctxNovo;
+      }
+
+      atual = proximoPadrao(espera.id);
+      if (!atual) return resultado(null, false);
+
     } else if (espera) {
       atual = proximoPadrao(espera.id);
     }
   }
 
-  // 2) Sem estado válido → começa pelo nó de início.
+  // ─── 2) Sem estado → começa pelo nó de início ────────────────────────────────
   if (!atual) {
     const inicio = nodes.find((n) => n.data.tipo === "inicio") ?? nodes[0];
     atual = inicio ? proximoPadrao(inicio.id) : undefined;
   }
 
-  // 3) Emite avançando até um nó de espera / humano / fim.
+  // ─── 3) Emite avançando até nó de pausa / humano / fim ──────────────────────
   let handoff = false;
   const visitados = new Set<string>();
+
   while (atual && !visitados.has(atual.id)) {
     visitados.add(atual.id);
     const d = atual.data;
 
-    // Nó de entidade (produto-catálogo/hub/entregador): pausa aqui. O conteúdo é
-    // dinâmico (vem do banco), então o webhook consulta e envia a lista numerada.
+    // Nó de entidade dinâmica (produto-catálogo/hub/entregador): pausa para o webhook resolver
     if (tipoEntidadeDoNo(atual)) {
-      return { envios, no_atual: atual.id, handoff };
+      return resultado(atual.id, handoff);
     }
 
     if (d.tipo === "botoes") {
-      envios.push({
-        tipo: "botoes",
-        texto: d.texto || "Escolha uma das opções:",
-        botoes: d.botoes ?? [],
-      });
-      return { envios, no_atual: atual.id, handoff };
+      envios.push({ tipo: "botoes", texto: d.texto || "Escolha uma das opções:", botoes: d.botoes ?? [] });
+      return resultado(atual.id, handoff);
     }
+
+    if (d.tipo === "captura") {
+      // Envia a pergunta e pausa para aguardar a resposta livre
+      if (d.texto) envios.push({ tipo: "texto", texto: d.texto });
+      return resultado(atual.id, handoff);
+    }
+
     if (d.tipo === "humano") {
       if (d.texto) envios.push({ tipo: "texto", texto: d.texto });
-      return { envios, no_atual: null, handoff: true };
+      return resultado(null, true);
     }
+
     if (d.tipo === "texto") {
       if (d.texto) envios.push({ tipo: "texto", texto: d.texto });
     } else if (d.tipo === "imagem") {
@@ -172,5 +277,5 @@ export function executarFluxo(
     atual = proximoPadrao(atual.id);
   }
 
-  return { envios, no_atual: null, handoff };
+  return resultado(null, handoff);
 }

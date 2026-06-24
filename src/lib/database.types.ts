@@ -19,7 +19,7 @@ export type FormaPagamento = "dlocal" | "pix" | "dinheiro";
 export type EntregaStatus = "aguardando" | "coletado" | "em_entrega" | "entregue" | "cancelada";
 export type PagamentoStatus = "pendente" | "pago" | "estornado" | "falha";
 export type ConversaStatus = "aberta" | "pendente" | "resolvida" | "arquivada";
-export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano" | "payment_dlocal" | "external_link" | "location_capture";
+export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano" | "payment_dlocal" | "external_link" | "location_capture" | "captura";
 
 export type OrgRow = {
   id: string;
@@ -194,6 +194,8 @@ export type FluxoEstado = {
   fluxo_id: string;
   no_atual: string;
   atualizado_em: string;
+  /** Contexto intermediário entre nós (produto pendente, formato escolhido, etc.). Zero migration — já é JSONB. */
+  contexto?: Record<string, unknown>;
 };
 
 export type ConversaRow = {
@@ -223,6 +225,16 @@ export type FluxoNodeData = {
   produto_id?: string;
   botoes?: FluxoBotao[];
   link_url?: string;
+  // Nó "produto": se true, guarda no contexto.item_pendente em vez de adicionar ao carrinho
+  // imediatamente. O nó "captura" de quantidade finaliza o item.
+  pede_quantidade?: boolean;
+  // Nó "botoes": se preenchido, salva o label do botão clicado em contexto[chave].
+  salvar_em_contexto?: string;
+  // Nó "captura": captura texto livre do cliente e armazena em contexto[variavel].
+  variavel?: string;
+  tipo_valor?: "numero" | "texto";
+  min_valor?: number;
+  max_valor?: number;
 };
 
 export type FluxoNode = {
@@ -277,7 +289,13 @@ export type ContatoRow = {
 };
 
 /** Item do carrinho do bot (snapshot de preço no momento do clique). */
-export type CarrinhoItem = { produto_id: string; quantidade: number; preco: number };
+export type CarrinhoItem = {
+  produto_id: string;
+  quantidade: number;
+  preco: number;
+  nome?: string;
+  formato?: string;
+};
 
 /** Sessão do bot no WhatsApp: posição no fluxo + carrinho, por telefone. */
 export type SessaoWhatsappRow = {
