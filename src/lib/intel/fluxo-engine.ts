@@ -132,18 +132,53 @@ function extrairNumero(texto: string): number | null {
   return null;
 }
 
-type ItemPendente = { produto_id: string; nome: string; preco_gs: number };
+type ItemPendente = { produto_id: string; nome: string; preco_gs: number; preco_caixa: number | null };
 
 function getItemPendente(ctx: Record<string, unknown>): ItemPendente | undefined {
   const ip = ctx.item_pendente;
   if (!ip || typeof ip !== "object") return undefined;
   const r = ip as Record<string, unknown>;
   if (typeof r.produto_id !== "string" || typeof r.nome !== "string" || typeof r.preco_gs !== "number") return undefined;
-  return { produto_id: r.produto_id, nome: r.nome, preco_gs: r.preco_gs };
+  return {
+    produto_id: r.produto_id,
+    nome: r.nome,
+    preco_gs: r.preco_gs,
+    preco_caixa: typeof r.preco_caixa === "number" ? r.preco_caixa : null,
+  };
+}
+
+/**
+ * Subtotal de um item do carrinho (pura, testável).
+ * Regra: formato "Caixa" usa preco_caixa (se houver); caso contrário, preço unitário.
+ */
+export function calcularSubtotal(
+  precoUnit: number,
+  precoCaixa: number | null | undefined,
+  formato: string | undefined,
+  quantidade: number,
+): number {
+  const ehCaixa = (formato ?? "").trim().toLowerCase() === "caixa";
+  const base = ehCaixa && precoCaixa != null && precoCaixa > 0 ? precoCaixa : precoUnit;
+  return base * quantidade;
 }
 
 /** Localização recebida do WhatsApp (PIN). O webhook extrai e passa ao engine. */
 export type LocalizacaoRecebida = { latitude: number; longitude: number; endereco?: string };
+
+/**
+ * Resumo final do carrinho para o checkout (puro). Itera os itens, formata cada
+ * linha e soma os subtotais. Ex.: "2x Michelob Ultra - Caixa (₲ 130.000)".
+ */
+export function montarResumoCheckout(carrinho: CarrinhoItem[]): { texto: string; total: number } {
+  const subtotalDe = (it: CarrinhoItem) => it.subtotal ?? it.preco * it.quantidade;
+  const linhas = carrinho.map((it) => {
+    const fmt = it.formato ? ` - ${it.formato}` : "";
+    return `${it.quantidade}x ${it.nome ?? "Item"}${fmt} (${gs(subtotalDe(it))})`;
+  });
+  const total = carrinho.reduce((s, it) => s + subtotalDe(it), 0);
+  const texto = `*Resumo do Pedido:*\n${linhas.join("\n")}\n\n*Total a pagar: ${gs(total)}*`;
+  return { texto, total };
+}
 
 export function executarFluxo(
   fluxo: { nodes: FluxoNode[]; edges: FluxoEdge[] },
@@ -251,16 +286,18 @@ export function executarFluxo(
       // Monta o novo contexto com o valor capturado
       const ctxNovo: Record<string, unknown> = { ...ctxAtual, [variavel]: valorCapturado };
 
-      // Se é "quantidade" e há um item pendente → finaliza o carrinho
+      // Se é "quantidade" e há um item pendente → finaliza o carrinho (com subtotal calculado)
       if (variavel === "quantidade" && getItemPendente(ctxAtual)) {
         const ip = getItemPendente(ctxAtual)!;
         const formato = typeof ctxAtual.formato === "string" ? ctxAtual.formato : undefined;
+        const qtd = valorCapturado as number;
         adicionar_carrinho = [{
           produto_id: ip.produto_id,
-          quantidade: valorCapturado as number,
+          quantidade: qtd,
           preco: ip.preco_gs,
           nome: ip.nome,
           ...(formato ? { formato } : {}),
+          subtotal: calcularSubtotal(ip.preco_gs, ip.preco_caixa, formato, qtd),
         }];
         // Limpa item_pendente e formato do contexto (item finalizado)
         const { item_pendente: _ip, formato: _fmt, quantidade: _q, ...ctxLimpo } = ctxNovo;

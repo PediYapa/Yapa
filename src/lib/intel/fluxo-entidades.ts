@@ -37,7 +37,13 @@ export type EnvioEntidade =
 const LIMITE_BOTOES = 3;  // WhatsApp: máx. 3 botões interativos
 const LIMITE_POLL   = 12; // WhatsApp: máx. 12 opções em enquete
 
-type ProdutoSel = { id: string; nome: string; preco_gs: number };
+type ProdutoSel = {
+  id: string;
+  nome: string;
+  preco_gs: number;
+  preco_caixa: number | null;
+  opcoes_variacao: string[] | null;
+};
 
 /** Produtos disponíveis da org, na MESMA ordem usada para montar a lista (por nome). */
 async function consultarProdutosDisponiveis(
@@ -47,7 +53,7 @@ async function consultarProdutosDisponiveis(
 ): Promise<ProdutoSel[]> {
   let q = admin
     .from("produtos")
-    .select("id, nome, preco_gs")
+    .select("id, nome, preco_gs, preco_caixa, opcoes_variacao")
     .eq("org_id", orgId)
     .eq("disponivel", true)
     .is("deleted_at", null);
@@ -144,8 +150,14 @@ export async function montarListaEntidade(
   }
 }
 
-/** Item escolhido pelo cliente (id real + nome + preço-base em GS, snapshot p/ o carrinho). */
-export type ItemSelecionado = { produto_id: string; nome: string; preco: number };
+/** Item escolhido pelo cliente (snapshot p/ o carrinho + dados p/ caixa e sabor). */
+export type ItemSelecionado = {
+  produto_id: string;
+  nome: string;
+  preco: number;
+  preco_caixa: number | null;
+  opcoes_variacao: string[] | null;
+};
 
 /**
  * Mapeia a resposta do cliente (clique/voto ou número digitado) de volta ao produto
@@ -163,18 +175,25 @@ export async function resolverSelecaoProduto(
     const rows = await consultarProdutosDisponiveis(admin, orgId);
     if (rows.length === 0) return null;
 
+    const toItem = (r: ProdutoSel): ItemSelecionado => ({
+      produto_id: r.id,
+      nome: r.nome,
+      preco: r.preco_gs,
+      preco_caixa: r.preco_caixa,
+      opcoes_variacao: r.opcoes_variacao,
+    });
+
     // 1) Por índice (fallback de texto numerado).
     if (selecao.indice != null && selecao.indice >= 1 && selecao.indice <= rows.length) {
-      const r = rows[selecao.indice - 1];
-      return { produto_id: r.id, nome: r.nome, preco: r.preco_gs };
+      return toItem(rows[selecao.indice - 1]);
     }
     // 2) Por label exato (botão/enquete devolvem o texto que montamos).
     const alvo = selecao.texto.trim();
     const porLabel = rows.find((r) => `${r.nome} - ${gs(r.preco_gs)}` === alvo);
-    if (porLabel) return { produto_id: porLabel.id, nome: porLabel.nome, preco: porLabel.preco_gs };
+    if (porLabel) return toItem(porLabel);
     // 3) Por nome (robustez: WhatsApp pode truncar labels longos).
     const porNome = rows.find((r) => alvo === r.nome || alvo.startsWith(r.nome));
-    if (porNome) return { produto_id: porNome.id, nome: porNome.nome, preco: porNome.preco_gs };
+    if (porNome) return toItem(porNome);
 
     return null;
   } catch {

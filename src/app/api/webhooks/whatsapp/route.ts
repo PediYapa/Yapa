@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { interpretarMensagem } from "@/lib/integrations/openai";
 import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } from "@/lib/integrations/zapi";
-import { executarFluxo, tipoEntidadeDoNo, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
+import { executarFluxo, tipoEntidadeDoNo, montarResumoCheckout, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
 import { montarListaEntidade, resolverSelecaoProduto, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
 import { recuperarOuCriarSessao, salvarSessao } from "@/lib/intel/sessao-whatsapp";
 import type { ConversaMensagem, FluxoEstado, FluxoNode, CarrinhoItem } from "@/lib/database.types";
@@ -267,55 +267,39 @@ export async function POST(request: Request) {
       const escolha = Number.parseInt(texto.trim(), 10);
       const selecaoValida = respostaInterativa || (Number.isInteger(escolha) && escolha >= 1);
 
-      if (entEspera && noEspera && !selecaoValida) {
-        // Apresenta/reapresenta a lista de entidade; contexto é preservado
-        await enviarLista(noEspera, entEspera);
-        respondeuPorFluxo = true;
-        novoNoAtual = noEspera.id;
-      } else {
-        if (entEspera === "produto" && noEspera && selecaoValida) {
-          const indice = respostaInterativa ? null : Number.isInteger(escolha) ? escolha : null;
-          const item = await resolverSelecaoProduto(admin, orgId, { texto: textoEntidade, indice });
-          if (item) {
-            if (noEspera.data.pede_quantidade) {
-              // Funil de quantidade: guarda no contexto para o nó "captura" finalizar
-              contexto = {
-                ...contexto,
-                item_pendente: { produto_id: item.produto_id, nome: item.nome, preco_gs: item.preco },
-              };
-            } else {
-              carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco, nome: item.nome });
-            }
+      // ── Helpers modularizados ───────────────────────────────────────────────
+
+      // Geo: distribuidora mais próxima cujo raio cobre o ponto (RPC no Postgres).
+      const matchDistribuidora = async (lat: number, lng: number): Promise<string | null> => {
+        const { data, error } = await admin.rpc("match_distribuidora", { user_lat: lat, user_lng: lng });
+        if (error) { console.error("[yapa:geo] match_distribuidora:", error.message); return null; }
+        return (data as string | null) ?? null;
+      };
+
+      // Etapa virtual de sabor: ≤3 botões, 4–12 enquete (a resposta é lida pelo label).
+      const enviarOpcoesVariacao = async (titulo: string, opcoes: string[]): Promise<void> => {
+        if (opcoes.length <= 3) {
+          await enviarBotoes(phone, titulo, opcoes.map((o, i) => ({ id: `sab-${i}`, label: o })), zapiCfg);
+        } else {
+          const pollResult = await enviarPoll(phone, titulo, opcoes, zapiCfg);
+          if (!pollResult.ok) {
+            const corpo = opcoes.map((o, i) => `${i + 1}. ${o}`).join("\n");
+            await enviarTexto(phone, `${titulo}\n\n${corpo}\n\nDigite o número:`, zapiCfg);
           }
         }
+      };
 
-        const resultado = executarFluxo(
-          { nodes: fluxo.nodes, edges: fluxo.edges },
-          estado,
-          texto,
-          (id) => produtosMap.get(id),
-          localizacao,
-        );
-
-        // Aplica o patch de contexto retornado pelo engine (captura/botoes com salvar_em_contexto)
-        if (resultado.contexto_patch !== undefined) {
-          contexto = resultado.contexto_patch;
-        }
-
-        // Acrescenta itens finalizados pelo engine (captura de quantidade)
-        if (resultado.adicionar_carrinho?.length) {
-          for (const item of resultado.adicionar_carrinho) {
-            carrinho.push(item);
-          }
-        }
-
+      // Roda o motor, despacha os envios e aplica contexto/carrinho. Retorna o resultado.
+      const rodarEngine = async (estadoIn: FluxoEstado | null, textoIn: string, locIn: typeof localizacao) => {
+        const resultado = executarFluxo({ nodes: fluxo.nodes, edges: fluxo.edges }, estadoIn, textoIn, (id) => produtosMap.get(id), locIn);
+        if (resultado.contexto_patch !== undefined) contexto = resultado.contexto_patch;
+        if (resultado.adicionar_carrinho?.length) carrinho.push(...resultado.adicionar_carrinho);
         for (const envio of resultado.envios) {
           try {
             if (envio.tipo === "texto") await enviarTexto(phone, envio.texto, zapiCfg);
             else if (envio.tipo === "imagem") await enviarImagem(phone, envio.imagem_url, envio.caption, zapiCfg);
             else if (envio.botoes.length > 3) {
-              // WhatsApp: send-button-list aceita só 3. Acima disso (ex.: menu de 5
-              // categorias) vai como enquete; com fallback de texto numerado se falhar.
+              // WhatsApp: até 3 botões; acima disso (ex.: menu de 5 categorias) vai como enquete.
               const labels = envio.botoes.map((b) => b.label);
               const pollResult = await enviarPoll(phone, envio.texto, labels, zapiCfg);
               if (!pollResult.ok) {
@@ -325,43 +309,103 @@ export async function POST(request: Request) {
             } else {
               await enviarBotoes(phone, envio.texto, envio.botoes, zapiCfg);
             }
-          } catch {
-            /* não-bloqueante */
-          }
+          } catch { /* não-bloqueante */ }
           const textoLog =
-            envio.tipo === "texto"
-              ? envio.texto
-              : envio.tipo === "imagem"
-                ? `[imagem] ${envio.caption ?? envio.imagem_url}`
+            envio.tipo === "texto" ? envio.texto
+              : envio.tipo === "imagem" ? `[imagem] ${envio.caption ?? envio.imagem_url}`
                 : `${envio.texto} [${envio.botoes.map((b) => b.label).join(" | ")}]`;
           novasMensagens.push({ de: "bot", texto: textoLog, tipo: envio.tipo, em: agora });
         }
-
         respondeuPorFluxo = resultado.envios.length > 0;
         acionarHandoff = resultado.handoff;
         novoNoAtual = resultado.no_atual;
-
-        console.log("[yapa:engine-saida]", {
-          phone: phone.slice(-4),
-          envios: resultado.envios.length,
-          no_atual_novo: resultado.no_atual ?? "null(encerrado)",
-          handoff: resultado.handoff,
-          contexto_keys: Object.keys(contexto),
-        });
-
+        // Nó de entidade dinâmica → o webhook resolve a lista (catálogo/hub/entregador).
         if (resultado.no_atual) {
           const no = getNode(resultado.no_atual);
           const ent = no ? tipoEntidadeDoNo(no) : null;
-          if (no && ent) {
-            await enviarLista(no, ent);
-            respondeuPorFluxo = true;
+          if (no && ent) { await enviarLista(no, ent); respondeuPorFluxo = true; }
+        }
+        console.log("[yapa:engine-saida]", { phone: phone.slice(-4), no_atual_novo: resultado.no_atual ?? "null", contexto_keys: Object.keys(contexto) });
+        return resultado;
+      };
+
+      // Encerramento: se o fluxo acabou com carrinho, envia o resumo e registra a distribuidora.
+      const finalizarSeEncerrou = async (resultado: { no_atual: string | null }): Promise<void> => {
+        if (resultado.no_atual !== null) return;
+        if (carrinho.length > 0) {
+          const { texto: resumo } = montarResumoCheckout(carrinho);
+          await enviarTexto(phone, resumo, zapiCfg);
+          novasMensagens.push({ de: "bot", texto: resumo, tipo: "texto", em: agora });
+          const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
+          if (distId) {
+            const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
+            if (dist?.nome) novasMensagens.push({ de: "bot", texto: `[interno] Distribuidora atribuída: ${dist.nome}`, tipo: "texto", em: agora });
           }
         }
+        carrinho.length = 0;
+        contexto = {};
+      };
 
-        // Fluxo encerrado: limpa carrinho e contexto
-        if (resultado.no_atual === null) {
-          carrinho.length = 0;
-          contexto = {};
+      // ── Roteamento da mensagem ──────────────────────────────────────────────
+
+      if (contexto.aguardando_sabor && estado) {
+        // ETAPA VIRTUAL DE SABOR: concatena o sabor ao nome e retoma a quantidade.
+        const sabor = (textoEntidade || texto).trim();
+        const ip = (contexto.item_pendente ?? {}) as Record<string, unknown>;
+        if (sabor && typeof ip.nome_base === "string") ip.nome = `${ip.nome_base} - ${sabor}`;
+        const ctxLimpo = { ...contexto };
+        delete ctxLimpo.aguardando_sabor;
+        contexto = ctxLimpo;
+        const resultado = await rodarEngine({ ...estado, contexto }, "", null);
+        await finalizarSeEncerrou(resultado);
+      } else if (noEspera?.data.tipo === "location_capture" && localizacao && estado) {
+        // GEO-ROUTING: casa a distribuidora antes de avançar para o checkout.
+        const distId = await matchDistribuidora(localizacao.latitude, localizacao.longitude);
+        if (!distId) {
+          const msg = "Infelizmente ainda não atendemos esse endereço. 😕 Envie um ponto mais próximo do centro de Ciudad del Este.";
+          await enviarTexto(phone, msg, zapiCfg);
+          novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+          novoNoAtual = noEspera.id; // permanece aguardando nova localização
+          respondeuPorFluxo = true;
+        } else {
+          contexto = { ...contexto, distribuidora_id: distId };
+          const resultado = await rodarEngine({ ...estado, contexto }, texto, localizacao);
+          await finalizarSeEncerrou(resultado);
+        }
+      } else if (entEspera && noEspera && !selecaoValida) {
+        // Reapresenta a lista de entidade (resposta inválida); contexto preservado.
+        await enviarLista(noEspera, entEspera);
+        respondeuPorFluxo = true;
+        novoNoAtual = noEspera.id;
+      } else {
+        let aguardarSabor = false;
+        if (entEspera === "produto" && noEspera && selecaoValida) {
+          const indice = respostaInterativa ? null : Number.isInteger(escolha) ? escolha : null;
+          const item = await resolverSelecaoProduto(admin, orgId, { texto: textoEntidade, indice });
+          if (item) {
+            if (noEspera.data.pede_quantidade) {
+              const sabores = item.opcoes_variacao ?? [];
+              contexto = {
+                ...contexto,
+                item_pendente: { produto_id: item.produto_id, nome: item.nome, nome_base: item.nome, preco_gs: item.preco, preco_caixa: item.preco_caixa },
+              };
+              if (sabores.length > 0) {
+                // FUNIL DINÂMICO DE SABOR: pergunta o sabor antes da quantidade.
+                aguardarSabor = true;
+                contexto = { ...contexto, aguardando_sabor: true };
+                await enviarOpcoesVariacao("Qual sabor você prefere?", sabores);
+                novasMensagens.push({ de: "bot", texto: `Qual sabor você prefere? [${sabores.join(" | ")}]`, tipo: "botoes", em: agora });
+                novoNoAtual = noEspera.id; // permanece no nó de produto até o sabor chegar
+                respondeuPorFluxo = true;
+              }
+            } else {
+              carrinho.push({ produto_id: item.produto_id, quantidade: 1, preco: item.preco, nome: item.nome, subtotal: item.preco });
+            }
+          }
+        }
+        if (!aguardarSabor) {
+          const resultado = await rodarEngine(estado, texto, localizacao);
+          await finalizarSeEncerrou(resultado);
         }
       }
 

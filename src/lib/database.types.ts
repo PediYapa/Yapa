@@ -293,13 +293,14 @@ export type ContatoRow = {
   created_at: string;
 };
 
-/** Item do carrinho do bot (snapshot de preço no momento do clique). */
+/** Item do carrinho do bot (snapshot no momento do clique). */
 export type CarrinhoItem = {
   produto_id: string;
   quantidade: number;
-  preco: number;
-  nome?: string;
-  formato?: string;
+  preco: number;        // preço unitário-base snapshot (GS)
+  nome?: string;        // nome completo (com sabor, se houver)
+  formato?: string;     // "Caixa" | "Unidade" (cervejas)
+  subtotal?: number;    // quantidade × (preco_caixa se Caixa, senão preco)
 };
 
 /** Sessão do bot no WhatsApp: posição no fluxo + carrinho, por telefone. */
@@ -340,8 +341,13 @@ export type Database = {
       sessoes_whatsapp: TableShape<SessaoWhatsappRow>;
     };
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
+    Functions: {
+      match_distribuidora: {
+        Args: { user_lat: number; user_lng: number };
+        Returns: string | null;
+      };
+    };
     Enums: {
       user_role: UserRole;
       produto_categoria: ProdutoCategoria;
