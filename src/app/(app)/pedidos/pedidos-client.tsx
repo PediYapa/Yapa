@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, CheckCircle2 } from "lucide-react";
 import type { ClienteRow, DistribuidoraRow, ProdutoRow } from "@/lib/database.types";
 import { criarPedido } from "@/app/actions/pedidos";
+import { aprovarPagamento } from "@/app/actions/aprovar-pagamento";
 import type { ActionResult } from "@/lib/auth/guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,35 @@ function SubmitButton() {
 let nextId = 1;
 function novoItem(): ItemForm {
   return { id: nextId++, descricao: "", quantidade: "1", preco: "" };
+}
+
+/**
+ * Botão inline de aprovação rápida (mock do gateway) na lista de pedidos.
+ * Aparece só para pedidos `aguardando_pagamento`. Marca pago e dispara a comanda.
+ */
+export function AprovarPagamentoButton({ pedidoId, temDistribuidora }: { pedidoId: string; temDistribuidora: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [erro, setErro] = useState<string | null>(null);
+
+  function aprovar() {
+    setErro(null);
+    startTransition(async () => {
+      const res = await aprovarPagamento(pedidoId);
+      if (!res.ok) setErro("error" in res ? res.error ?? "Erro" : "Erro");
+      else router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button size="sm" variant="outline" disabled={pending || !temDistribuidora} onClick={aprovar}>
+        <CheckCircle2 /> {pending ? "Aprovando…" : "Aprovar"}
+      </Button>
+      {!temDistribuidora && <span className="text-[10px] text-amber-600">sem distribuidora</span>}
+      {erro && <span className="max-w-40 text-right text-[10px] text-destructive">{erro}</span>}
+    </div>
+  );
 }
 
 export function NovoPedidoButton({

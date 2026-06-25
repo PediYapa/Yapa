@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { gs, dataHoraBR } from "@/lib/format";
 import { PEDIDO_STATUS_META } from "@/lib/intel/status";
 import { cn } from "@/lib/cn";
-import { NovoPedidoButton } from "./pedidos-client";
+import { NovoPedidoButton, AprovarPagamentoButton } from "./pedidos-client";
 
 export const dynamic = "force-dynamic";
 
@@ -137,6 +137,7 @@ export default async function PedidosPage({
                 <TableHead>Distribuidora</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Criado</TableHead>
+                <TableHead className="w-28"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -154,6 +155,11 @@ export default async function PedidosPage({
                     <TableCell>{dist?.nome ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{gs(p.valor_total_gs)}</TableCell>
                     <TableCell>{dataHoraBR(p.created_at)}</TableCell>
+                    <TableCell className="text-right">
+                      {canWrite && p.status === "aguardando_pagamento" && (
+                        <AprovarPagamentoButton pedidoId={p.id} temDistribuidora={!!p.distribuidora_id} />
+                      )}
+                    </TableCell>
                   </TableRow>
                 );
               })}
