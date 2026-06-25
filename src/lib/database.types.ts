@@ -293,6 +293,17 @@ export type ContatoRow = {
   created_at: string;
 };
 
+/** Métricas vivas de CRM por cliente (view yapa.clientes_metricas). */
+export type ClienteMetricasRow = {
+  cliente_id: string;
+  org_id: string;
+  nome: string | null;
+  telefone: string;
+  total_pedidos: number;
+  ticket_medio: number;
+  ultima_compra: string | null;
+};
+
 /** Item do carrinho do bot (snapshot no momento do clique). */
 export type CarrinhoItem = {
   produto_id: string;
@@ -340,7 +351,9 @@ export type Database = {
       contatos: TableShape<ContatoRow>;
       sessoes_whatsapp: TableShape<SessaoWhatsappRow>;
     };
-    Views: { [_ in never]: never };
+    Views: {
+      clientes_metricas: { Row: ClienteMetricasRow; Relationships: [] };
+    };
     CompositeTypes: { [_ in never]: never };
     Functions: {
       match_distribuidora: {

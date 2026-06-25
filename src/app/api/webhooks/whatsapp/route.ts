@@ -9,6 +9,15 @@ import type { ConversaMensagem, FluxoEstado, FluxoNode, CarrinhoItem } from "@/l
 
 export const dynamic = "force-dynamic";
 
+/** Mapeia o label do botão de pagamento para o enum forma_pagamento do banco. */
+function mapearFormaPagamento(label: string | null): "dinheiro" | "pix" | null {
+  if (!label) return null;
+  const t = label.toLowerCase();
+  if (t.includes("efetivo") || t.includes("dinheiro") || t.includes("efectivo")) return "dinheiro";
+  if (t.includes("pix") || t.includes("alias") || t.includes("qr")) return "pix";
+  return null;
+}
+
 /**
  * POST /api/webhooks/whatsapp — recebe mensagens inbound do Z-API.
  *
@@ -339,27 +348,56 @@ export async function POST(request: Request) {
         const lat = typeof contexto.latitude === "number" ? contexto.latitude : null;
         const lng = typeof contexto.longitude === "number" ? contexto.longitude : null;
         const endereco = typeof contexto.endereco === "string" ? contexto.endereco : null;
-        const nomeCliente = typeof contexto.nome === "string" ? contexto.nome : null;
+        const nomeCliente = typeof contexto.nome === "string" ? contexto.nome.trim() : null;
+        const metodoLabel = typeof contexto.metodo_pagamento === "string" ? contexto.metodo_pagamento : null;
+        const formaPagamento = mapearFormaPagamento(metodoLabel);
 
-        // ── P1: gravar pedido + itens no banco ─────────────────────────────────
         let pedidoId: string | null = null;
+        let pedidoNum: number | null = null;
         try {
-          // Tenta associar ao cliente pelo telefone (se já cadastrado)
-          const { data: cli } = await admin.from("clientes").select("id").eq("org_id", orgId).eq("telefone", phone).maybeSingle();
+          // ── CRM: upsert do cliente por (org, telefone) ──────────────────────
+          const { data: cli } = await admin
+            .from("clientes")
+            .select("id")
+            .eq("org_id", orgId)
+            .eq("telefone", phone)
+            .is("deleted_at", null)
+            .maybeSingle();
 
+          let clienteId = cli?.id ?? null;
+          const patchCliente = {
+            ...(nomeCliente ? { nome: nomeCliente } : {}),
+            ...(endereco ? { endereco } : {}),
+            ...(lat != null ? { latitude: lat } : {}),
+            ...(lng != null ? { longitude: lng } : {}),
+          };
+          if (clienteId) {
+            if (Object.keys(patchCliente).length) await admin.from("clientes").update(patchCliente).eq("id", clienteId);
+          } else {
+            const { data: novo } = await admin
+              .from("clientes")
+              .insert({ org_id: orgId, telefone: phone, ...patchCliente })
+              .select("id")
+              .single();
+            clienteId = novo?.id ?? null;
+          }
+
+          // ── Pedido (status aguardando_pagamento + forma escolhida) ──────────
           const { data: pedido, error: errPedido } = await admin
             .from("pedidos")
             .insert({
               org_id: orgId,
-              cliente_id: cli?.id ?? null,
+              cliente_id: clienteId,
               distribuidora_id: distId,
+              status: "aguardando_pagamento",
               canal: "whatsapp",
               moeda: "GS",
+              forma_pagamento: formaPagamento,
               valor_total_gs: total,
               latitude: lat,
               longitude: lng,
               endereco_entrega: endereco,
-              observacao: nomeCliente ? `Cliente: ${nomeCliente}` : null,
+              observacao: [nomeCliente ? `Cliente: ${nomeCliente}` : null, metodoLabel ? `Pagamento: ${metodoLabel}` : null].filter(Boolean).join(" | ") || null,
             })
             .select("id, numero")
             .single();
@@ -368,8 +406,7 @@ export async function POST(request: Request) {
             console.error("[yapa:pedido] insert pedido:", errPedido.message);
           } else if (pedido) {
             pedidoId = pedido.id as string;
-
-            // Insere os itens do carrinho
+            pedidoNum = pedido.numero as number;
             const itens = carrinho.map((it) => ({
               org_id: orgId,
               pedido_id: pedidoId!,
@@ -381,34 +418,23 @@ export async function POST(request: Request) {
             }));
             const { error: errItens } = await admin.from("pedido_itens").insert(itens);
             if (errItens) console.error("[yapa:pedido] insert itens:", errItens.message);
-
-            console.log("[yapa:pedido] criado", { numero: pedido.numero, id: pedidoId, total, itens: itens.length });
+            console.log("[yapa:pedido] criado", { numero: pedidoNum, total, itens: itens.length, forma: formaPagamento });
           }
         } catch (err) {
           console.error("[yapa:pedido] exception:", err);
         }
 
-        // ── Envia resumo ao cliente ────────────────────────────────────────────
-        const pedidoNumero = pedidoId
-          ? `\n\n_Pedido #${(await admin.from("pedidos").select("numero").eq("id", pedidoId).single()).data?.numero ?? "?"} registrado._`
-          : "";
-        const resumoFinal = resumo + pedidoNumero;
+        // ── Resumo ao cliente ───────────────────────────────────────────────
+        const rodape = pedidoNum != null ? `\n\n_Pedido #${pedidoNum} registrado._` : "";
+        const resumoFinal = resumo + rodape;
         await enviarTexto(phone, resumoFinal, zapiCfg);
         novasMensagens.push({ de: "bot", texto: resumoFinal, tipo: "texto", em: agora });
 
-        // Nota interna da distribuidora atribuída
         if (distId) {
           const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
-          if (dist?.nome) {
-            const nota = `[interno] Distribuidora atribuída: ${dist.nome}`;
-            novasMensagens.push({ de: "bot", texto: nota, tipo: "texto", em: agora });
-          }
+          if (dist?.nome) novasMensagens.push({ de: "bot", texto: `[interno] Distribuidora atribuída: ${dist.nome}`, tipo: "texto", em: agora });
         }
-
-        // Vincula o pedido à conversa
-        if (pedidoId && conversa) {
-          await admin.from("conversas").update({ pedido_id: pedidoId }).eq("id", conversa.id);
-        }
+        if (pedidoId && conversa) await admin.from("conversas").update({ pedido_id: pedidoId }).eq("id", conversa.id);
 
         carrinho.length = 0;
         contexto = {};

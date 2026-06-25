@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Route, MapPin, Wallet, KeyRound } from "lucide-react";
+import { ArrowRight, Route, MapPin, Wallet, KeyRound, CheckCircle2 } from "lucide-react";
 import type { PedidoRow, DistribuidoraRow, PedidoStatus, FormaPagamento } from "@/lib/database.types";
 import {
   mudarStatus,
@@ -11,6 +11,7 @@ import {
   registrarPagamento,
   gerarCodigo,
 } from "@/app/actions/pedidos";
+import { aprovarPagamento } from "@/app/actions/aprovar-pagamento";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -56,6 +57,23 @@ export function PedidoAcoes({
 
   return (
     <div className="space-y-5">
+      {/* Mock do gateway: aprovar pagamento → dispara comanda à distribuidora */}
+      {pedido.status === "aguardando_pagamento" && (
+        <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <Label>Pagamento (simulação de gateway)</Label>
+          <Button
+            className="w-full"
+            disabled={pending}
+            onClick={() => run(() => aprovarPagamento(pedido.id))}
+          >
+            <CheckCircle2 /> Aprovar pagamento e despachar
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Marca como pago e envia a comanda de separação para a distribuidora ({pedido.distribuidora_id ? "atribuída" : "⚠ sem distribuidora"}).
+          </p>
+        </div>
+      )}
+
       {/* Status */}
       <div className="space-y-2">
         <Label>Status</Label>
