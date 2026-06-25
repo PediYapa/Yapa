@@ -332,16 +332,84 @@ export async function POST(request: Request) {
       // Encerramento: se o fluxo acabou com carrinho, envia o resumo e registra a distribuidora.
       const finalizarSeEncerrou = async (resultado: { no_atual: string | null }): Promise<void> => {
         if (resultado.no_atual !== null) return;
-        if (carrinho.length > 0) {
-          const { texto: resumo } = montarResumoCheckout(carrinho);
-          await enviarTexto(phone, resumo, zapiCfg);
-          novasMensagens.push({ de: "bot", texto: resumo, tipo: "texto", em: agora });
-          const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
-          if (distId) {
-            const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
-            if (dist?.nome) novasMensagens.push({ de: "bot", texto: `[interno] Distribuidora atribuída: ${dist.nome}`, tipo: "texto", em: agora });
+        if (carrinho.length === 0) { contexto = {}; return; }
+
+        const { texto: resumo, total } = montarResumoCheckout(carrinho);
+        const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
+        const lat = typeof contexto.latitude === "number" ? contexto.latitude : null;
+        const lng = typeof contexto.longitude === "number" ? contexto.longitude : null;
+        const endereco = typeof contexto.endereco === "string" ? contexto.endereco : null;
+        const nomeCliente = typeof contexto.nome === "string" ? contexto.nome : null;
+
+        // ── P1: gravar pedido + itens no banco ─────────────────────────────────
+        let pedidoId: string | null = null;
+        try {
+          // Tenta associar ao cliente pelo telefone (se já cadastrado)
+          const { data: cli } = await admin.from("clientes").select("id").eq("org_id", orgId).eq("telefone", phone).maybeSingle();
+
+          const { data: pedido, error: errPedido } = await admin
+            .from("pedidos")
+            .insert({
+              org_id: orgId,
+              cliente_id: cli?.id ?? null,
+              distribuidora_id: distId,
+              canal: "whatsapp",
+              moeda: "GS",
+              valor_total_gs: total,
+              latitude: lat,
+              longitude: lng,
+              endereco_entrega: endereco,
+              observacao: nomeCliente ? `Cliente: ${nomeCliente}` : null,
+            })
+            .select("id, numero")
+            .single();
+
+          if (errPedido) {
+            console.error("[yapa:pedido] insert pedido:", errPedido.message);
+          } else if (pedido) {
+            pedidoId = pedido.id as string;
+
+            // Insere os itens do carrinho
+            const itens = carrinho.map((it) => ({
+              org_id: orgId,
+              pedido_id: pedidoId!,
+              produto_id: it.produto_id,
+              descricao: it.nome ?? it.produto_id,
+              quantidade: it.quantidade,
+              preco_unit_gs: it.preco,
+              subtotal_gs: it.subtotal ?? it.preco * it.quantidade,
+            }));
+            const { error: errItens } = await admin.from("pedido_itens").insert(itens);
+            if (errItens) console.error("[yapa:pedido] insert itens:", errItens.message);
+
+            console.log("[yapa:pedido] criado", { numero: pedido.numero, id: pedidoId, total, itens: itens.length });
+          }
+        } catch (err) {
+          console.error("[yapa:pedido] exception:", err);
+        }
+
+        // ── Envia resumo ao cliente ────────────────────────────────────────────
+        const pedidoNumero = pedidoId
+          ? `\n\n_Pedido #${(await admin.from("pedidos").select("numero").eq("id", pedidoId).single()).data?.numero ?? "?"} registrado._`
+          : "";
+        const resumoFinal = resumo + pedidoNumero;
+        await enviarTexto(phone, resumoFinal, zapiCfg);
+        novasMensagens.push({ de: "bot", texto: resumoFinal, tipo: "texto", em: agora });
+
+        // Nota interna da distribuidora atribuída
+        if (distId) {
+          const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
+          if (dist?.nome) {
+            const nota = `[interno] Distribuidora atribuída: ${dist.nome}`;
+            novasMensagens.push({ de: "bot", texto: nota, tipo: "texto", em: agora });
           }
         }
+
+        // Vincula o pedido à conversa
+        if (pedidoId && conversa) {
+          await admin.from("conversas").update({ pedido_id: pedidoId }).eq("id", conversa.id);
+        }
+
         carrinho.length = 0;
         contexto = {};
       };
