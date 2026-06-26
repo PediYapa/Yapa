@@ -5,6 +5,7 @@ import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } 
 import { executarFluxo, tipoEntidadeDoNo, montarResumoCheckout, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
 import { montarListaEntidade, resolverSelecaoProduto, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
 import { recuperarOuCriarSessao, salvarSessao } from "@/lib/intel/sessao-whatsapp";
+import { createPaymentLink } from "@/lib/dlocal";
 import type { ConversaMensagem, FluxoEstado, FluxoNode, CarrinhoItem } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
@@ -338,32 +339,22 @@ export async function POST(request: Request) {
         return resultado;
       };
 
-      // Encerramento: se o fluxo acabou com carrinho, envia o resumo e registra a distribuidora.
-      const finalizarSeEncerrou = async (resultado: { no_atual: string | null }): Promise<void> => {
-        if (resultado.no_atual !== null) return;
-        if (carrinho.length === 0) { contexto = {}; return; }
-
-        const { texto: resumo, total } = montarResumoCheckout(carrinho);
+      // Cria pedido (upsert cliente + pedido + itens) e vincula à conversa.
+      // NÃO envia resumo nem limpa o carrinho — o chamador decide.
+      const criarPedidoDoCarrinho = async (
+        forma: "dinheiro" | "pix" | null,
+      ): Promise<{ pedidoId: string; numero: number; total: number } | null> => {
+        const { total } = montarResumoCheckout(carrinho);
         const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
         const lat = typeof contexto.latitude === "number" ? contexto.latitude : null;
         const lng = typeof contexto.longitude === "number" ? contexto.longitude : null;
         const endereco = typeof contexto.endereco === "string" ? contexto.endereco : null;
         const nomeCliente = typeof contexto.nome === "string" ? contexto.nome.trim() : null;
         const metodoLabel = typeof contexto.metodo_pagamento === "string" ? contexto.metodo_pagamento : null;
-        const formaPagamento = mapearFormaPagamento(metodoLabel);
-
-        let pedidoId: string | null = null;
-        let pedidoNum: number | null = null;
         try {
-          // ── CRM: upsert do cliente por (org, telefone) ──────────────────────
+          // CRM: upsert do cliente por (org, telefone)
           const { data: cli } = await admin
-            .from("clientes")
-            .select("id")
-            .eq("org_id", orgId)
-            .eq("telefone", phone)
-            .is("deleted_at", null)
-            .maybeSingle();
-
+            .from("clientes").select("id").eq("org_id", orgId).eq("telefone", phone).is("deleted_at", null).maybeSingle();
           let clienteId = cli?.id ?? null;
           const patchCliente = {
             ...(nomeCliente ? { nome: nomeCliente } : {}),
@@ -374,75 +365,125 @@ export async function POST(request: Request) {
           if (clienteId) {
             if (Object.keys(patchCliente).length) await admin.from("clientes").update(patchCliente).eq("id", clienteId);
           } else {
-            const { data: novo } = await admin
-              .from("clientes")
-              .insert({ org_id: orgId, telefone: phone, ...patchCliente })
-              .select("id")
-              .single();
+            const { data: novo } = await admin.from("clientes").insert({ org_id: orgId, telefone: phone, ...patchCliente }).select("id").single();
             clienteId = novo?.id ?? null;
           }
 
-          // ── Pedido (status aguardando_pagamento + forma escolhida) ──────────
           const { data: pedido, error: errPedido } = await admin
             .from("pedidos")
             .insert({
-              org_id: orgId,
-              cliente_id: clienteId,
-              distribuidora_id: distId,
-              status: "aguardando_pagamento",
-              canal: "whatsapp",
-              moeda: "GS",
-              forma_pagamento: formaPagamento,
-              valor_total_gs: total,
-              latitude: lat,
-              longitude: lng,
-              endereco_entrega: endereco,
+              org_id: orgId, cliente_id: clienteId, distribuidora_id: distId, status: "aguardando_pagamento",
+              canal: "whatsapp", moeda: "GS", forma_pagamento: forma, valor_total_gs: total,
+              latitude: lat, longitude: lng, endereco_entrega: endereco,
               observacao: [nomeCliente ? `Cliente: ${nomeCliente}` : null, metodoLabel ? `Pagamento: ${metodoLabel}` : null].filter(Boolean).join(" | ") || null,
             })
             .select("id, numero")
             .single();
+          if (errPedido || !pedido) { console.error("[yapa:pedido] insert:", errPedido?.message); return null; }
 
-          if (errPedido) {
-            console.error("[yapa:pedido] insert pedido:", errPedido.message);
-          } else if (pedido) {
-            pedidoId = pedido.id as string;
-            pedidoNum = pedido.numero as number;
-            const itens = carrinho.map((it) => ({
-              org_id: orgId,
-              pedido_id: pedidoId!,
-              produto_id: it.produto_id,
-              descricao: it.nome ?? it.produto_id,
-              quantidade: it.quantidade,
-              preco_unit_gs: it.preco,
-              subtotal_gs: it.subtotal ?? it.preco * it.quantidade,
-            }));
-            const { error: errItens } = await admin.from("pedido_itens").insert(itens);
-            if (errItens) console.error("[yapa:pedido] insert itens:", errItens.message);
-            console.log("[yapa:pedido] criado", { numero: pedidoNum, total, itens: itens.length, forma: formaPagamento });
-          }
+          const itens = carrinho.map((it) => ({
+            org_id: orgId, pedido_id: pedido.id as string, produto_id: it.produto_id,
+            descricao: it.nome ?? it.produto_id, quantidade: it.quantidade,
+            preco_unit_gs: it.preco, subtotal_gs: it.subtotal ?? it.preco * it.quantidade,
+          }));
+          const { error: errItens } = await admin.from("pedido_itens").insert(itens);
+          if (errItens) console.error("[yapa:pedido] itens:", errItens.message);
+          if (conversa) await admin.from("conversas").update({ pedido_id: pedido.id }).eq("id", conversa.id);
+          console.log("[yapa:pedido] criado", { numero: pedido.numero, total, itens: itens.length, forma });
+          return { pedidoId: pedido.id as string, numero: pedido.numero as number, total };
         } catch (err) {
           console.error("[yapa:pedido] exception:", err);
+          return null;
         }
+      };
 
-        // ── Resumo ao cliente ───────────────────────────────────────────────
-        const rodape = pedidoNum != null ? `\n\n_Pedido #${pedidoNum} registrado._` : "";
-        const resumoFinal = resumo + rodape;
-        await enviarTexto(phone, resumoFinal, zapiCfg);
-        novasMensagens.push({ de: "bot", texto: resumoFinal, tipo: "texto", em: agora });
+      // Nota interna da distribuidora atribuída (visível ao operador na conversa).
+      const notaDistribuidora = async (): Promise<void> => {
+        const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
+        if (!distId) return;
+        const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
+        if (dist?.nome) novasMensagens.push({ de: "bot", texto: `[interno] Distribuidora atribuída: ${dist.nome}`, tipo: "texto", em: agora });
+      };
 
-        if (distId) {
-          const { data: dist } = await admin.from("distribuidoras").select("nome").eq("id", distId).maybeSingle();
-          if (dist?.nome) novasMensagens.push({ de: "bot", texto: `[interno] Distribuidora atribuída: ${dist.nome}`, tipo: "texto", em: agora });
-        }
-        if (pedidoId && conversa) await admin.from("conversas").update({ pedido_id: pedidoId }).eq("id", conversa.id);
-
+      // Encerramento padrão (fluxos SEM nó de pagamento): cria pedido, envia resumo, encerra.
+      const finalizarSeEncerrou = async (resultado: { no_atual: string | null }): Promise<void> => {
+        if (resultado.no_atual !== null) return;
+        if (carrinho.length === 0) { contexto = {}; return; }
+        const { texto: resumo } = montarResumoCheckout(carrinho);
+        const metodoLabel = typeof contexto.metodo_pagamento === "string" ? contexto.metodo_pagamento : null;
+        const novo = await criarPedidoDoCarrinho(mapearFormaPagamento(metodoLabel));
+        const rodape = novo ? `\n\n_Pedido #${novo.numero} registrado._` : "";
+        await enviarTexto(phone, resumo + rodape, zapiCfg);
+        novasMensagens.push({ de: "bot", texto: resumo + rodape, tipo: "texto", em: agora });
+        await notaDistribuidora();
         carrinho.length = 0;
         contexto = {};
       };
 
+      // Nó f-pagamento: decide Dinheiro na Entrega × Pagar Online (dLocal Go).
+      // Pedido criado uma única vez (idempotente via contexto.pedido_pendente_id),
+      // permitindo retentativa do link sem duplicar o pedido.
+      const processarPagamento = async (ehOnline: boolean): Promise<{ avancar: boolean }> => {
+        const { texto: resumo, total } = montarResumoCheckout(carrinho);
+        let pedidoId = typeof contexto.pedido_pendente_id === "string" ? contexto.pedido_pendente_id : null;
+        let numero = typeof contexto.pedido_numero === "number" ? contexto.pedido_numero : null;
+        let totalPedido = total;
+        if (!pedidoId) {
+          const novo = await criarPedidoDoCarrinho(ehOnline ? null : "dinheiro");
+          if (!novo) {
+            await enviarTexto(phone, "Tivemos um problema ao registrar seu pedido. Tente novamente em instantes.", zapiCfg);
+            return { avancar: false };
+          }
+          pedidoId = novo.pedidoId; numero = novo.numero; totalPedido = novo.total;
+          contexto = { ...contexto, pedido_pendente_id: pedidoId, pedido_numero: numero };
+          const rodape = `\n\n_Pedido #${numero} registrado._`;
+          await enviarTexto(phone, resumo + rodape, zapiCfg);
+          novasMensagens.push({ de: "bot", texto: resumo + rodape, tipo: "texto", em: agora });
+          await notaDistribuidora();
+        }
+
+        if (ehOnline) {
+          const link = await createPaymentLink({ pedidoId, amount: Math.round(totalPedido), description: `Yapa pedido #${numero}`, appUrl: url.origin });
+          if (link.ok) {
+            await admin.from("pedidos").update({ forma_pagamento: "dlocal", gateway_id: link.paymentId, gateway_status: link.status }).eq("id", pedidoId);
+            const msg = `Acesse o link seguro abaixo para concluir seu pagamento via QR Code, Transferência ou Cartão:\n${link.redirectUrl}`;
+            await enviarTexto(phone, msg, zapiCfg);
+            novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+            return { avancar: true };
+          }
+          console.warn("[yapa:dlocal] createPaymentLink falhou:", link.error);
+          const fb = "Tivemos um problema temporário ao gerar seu link. 😕 Por favor, tente novamente ou escolha Dinheiro.";
+          await enviarTexto(phone, fb, zapiCfg);
+          novasMensagens.push({ de: "bot", texto: fb, tipo: "texto", em: agora });
+          return { avancar: false }; // mantém no nó de pagamento; pedido_pendente_id preservado
+        }
+
+        await admin.from("pedidos").update({ forma_pagamento: "dinheiro" }).eq("id", pedidoId);
+        const msg = "Perfeito! Você paga em dinheiro na entrega. 💵";
+        await enviarTexto(phone, msg, zapiCfg);
+        novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+        return { avancar: true };
+      };
+
       // ── Roteamento da mensagem ──────────────────────────────────────────────
 
-      if (contexto.aguardando_sabor && estado) {
+      if (noEspera?.data.salvar_em_contexto === "metodo_pagamento" && estado && respostaInterativa) {
+        // NÓ DE PAGAMENTO: Dinheiro na Entrega × Pagar Online (dLocal Go).
+        const ehOnline = /online|💳|cart|tarjeta|dlocal/i.test(`${texto} ${textoEntidade}`);
+        const { avancar } = await processarPagamento(ehOnline);
+        if (avancar) {
+          carrinho.length = 0;
+          contexto = {};
+          // Avança para o nó final (humano) — emite a confirmação e liga o handoff.
+          await rodarEngine({ ...estado, contexto: {} }, texto, null);
+        } else {
+          // Fallback gracioso: permanece no nó de pagamento e re-apresenta as opções.
+          await enviarBotoes(phone, noEspera.data.texto || "Como você prefere pagar?", noEspera.data.botoes ?? [], zapiCfg);
+          novasMensagens.push({ de: "bot", texto: `${noEspera.data.texto ?? "Pagamento"} [${(noEspera.data.botoes ?? []).map((b) => b.label).join(" | ")}]`, tipo: "botoes", em: agora });
+          novoNoAtual = noEspera.id;
+          respondeuPorFluxo = true;
+        }
+      } else if (contexto.aguardando_sabor && estado) {
         // ETAPA VIRTUAL DE SABOR: concatena o sabor ao nome e retoma a quantidade.
         const sabor = (textoEntidade || texto).trim();
         const ip = (contexto.item_pendente ?? {}) as Record<string, unknown>;
