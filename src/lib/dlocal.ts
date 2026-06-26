@@ -32,6 +32,16 @@ function authHeader(c: { key: string; secret: string }): string {
   return `Bearer ${c.key}:${c.secret}`;
 }
 
+// Webhook NUNCA pode pendurar numa chamada externa: se a dLocal demorar, o
+// Z-API estoura o timeout e derruba a conexão (Status 0) + reenvia. Abortamos
+// rápido e devolvemos um erro tratável.
+const TIMEOUT_CRIAR_MS = 12_000;
+const TIMEOUT_CONSULTA_MS = 8_000;
+
+function ehAbort(err: unknown): boolean {
+  return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+}
+
 export type CriarLinkResultado =
   | { ok: true; paymentId: string; redirectUrl: string; status: string }
   | { ok: false; error: string };
@@ -58,11 +68,12 @@ export async function createPaymentLink(params: {
         currency: "PYG",
         country: "PY",
         order_id: params.pedidoId,
-        description: params.description.slice(0, 200),
+        description: params.description.slice(0, 100),
         notification_url: `${params.appUrl}/api/webhooks/dlocal`,
         success_url: `${params.appUrl}/pagamento/sucesso`,
         back_url: params.appUrl,
       }),
+      signal: AbortSignal.timeout(TIMEOUT_CRIAR_MS),
     });
 
     if (res.status === 429) {
@@ -82,6 +93,7 @@ export async function createPaymentLink(params: {
     }
     return { ok: true, paymentId, redirectUrl, status: String(data.status ?? "PENDING").toUpperCase() };
   } catch (err) {
+    if (ehAbort(err)) return { ok: false, error: `dLocal não respondeu em ${TIMEOUT_CRIAR_MS / 1000}s (timeout).` };
     return { ok: false, error: err instanceof Error ? err.message : "Falha de rede com a dLocal." };
   }
 }
@@ -97,6 +109,7 @@ export async function getPayment(paymentId: string): Promise<ConsultaPagamento> 
   try {
     const res = await fetch(`${BASE}/v1/payments/${encodeURIComponent(paymentId)}`, {
       headers: { Authorization: authHeader(c) },
+      signal: AbortSignal.timeout(TIMEOUT_CONSULTA_MS),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, error: `dLocal GET ${res.status}` };
@@ -106,6 +119,7 @@ export async function getPayment(paymentId: string): Promise<ConsultaPagamento> 
       orderId: String(data.order_id ?? ""),
     };
   } catch (err) {
+    if (ehAbort(err)) return { ok: false, error: `dLocal não respondeu em ${TIMEOUT_CONSULTA_MS / 1000}s (timeout).` };
     return { ok: false, error: err instanceof Error ? err.message : "Falha de rede com a dLocal." };
   }
 }
