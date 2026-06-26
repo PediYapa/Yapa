@@ -14,7 +14,12 @@ import "server-only";
  * Docs: https://docs.dlocalgo.com/integration-api
  */
 
-const BASE = process.env.DLOCAL_API_BASE || "https://api.dlocalgo.com";
+// Só aceita uma URL http(s) válida; qualquer outro valor (placeholder, vazio,
+// "pendente", etc.) cai no endpoint oficial de produção. Sem barra final.
+const BASE_RAW = process.env.DLOCAL_API_BASE?.trim();
+const BASE = BASE_RAW && /^https?:\/\//i.test(BASE_RAW)
+  ? BASE_RAW.replace(/\/+$/, "")
+  : "https://api.dlocalgo.com";
 
 function credenciais(): { key: string; secret: string } | null {
   const key = process.env.DLOCAL_API_KEY;
