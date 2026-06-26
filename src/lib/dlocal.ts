@@ -68,10 +68,12 @@ export async function createPaymentLink(params: {
     const res = await fetch(`${BASE}/v1/payments`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: authHeader(c) },
+      // Sem `country`: link de pago abierto. Fixar country: "PY" trava o
+      // checkout só em métodos paraguaios; sem ele, a dLocal exibe PIX para
+      // clientes brasileiros (a moeda PYG segue definindo a cobrança).
       body: JSON.stringify({
         amount: params.amount,
         currency: "PYG",
-        country: "PY",
         order_id: params.pedidoId,
         description: params.description.slice(0, 100),
         notification_url: `${params.appUrl}/api/webhooks/dlocal`,
