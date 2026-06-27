@@ -55,6 +55,7 @@ export type ClienteRow = {
   referencia: string | null;
   latitude: number | null;
   longitude: number | null;
+  documento_ruc: string | null;
   total_pedidos: number;
   ticket_medio_gs: number | null;
   ultima_compra: string | null;
@@ -128,7 +129,9 @@ export type PedidoRow = {
   moeda: Moeda;
   forma_pagamento: FormaPagamento | null;
   gateway_id: string | null;
-  gateway_status: string;
+  gateway_status: string | null;
+  precisa_fatura: boolean;
+  documento_ruc: string | null;
   valor_total_gs: number;
   valor_origem: number | null;
   codigo_validacao: string | null;

@@ -92,6 +92,7 @@ export function ClientesClient({ rows, canWrite }: { rows: ClienteRow[]; canWrit
               <TableRow>
                 <TableHead>Cliente</TableHead>
                 <TableHead>Telefone</TableHead>
+                <TableHead>RUC/CI</TableHead>
                 <TableHead>Zona</TableHead>
                 <TableHead className="text-right">Pedidos</TableHead>
                 <TableHead className="text-right">Ticket médio</TableHead>
@@ -104,6 +105,7 @@ export function ClientesClient({ rows, canWrite }: { rows: ClienteRow[]; canWrit
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.nome ?? "—"}</TableCell>
                   <TableCell>{telBR(c.telefone)}</TableCell>
+                  <TableCell className="tabular-nums">{c.documento_ruc ?? "—"}</TableCell>
                   <TableCell>{c.zona ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{c.total_pedidos}</TableCell>
                   <TableCell className="text-right tabular-nums">{gs(c.ticket_medio_gs)}</TableCell>

@@ -351,6 +351,9 @@ export async function POST(request: Request) {
         const endereco = typeof contexto.endereco === "string" ? contexto.endereco : null;
         const nomeCliente = typeof contexto.nome === "string" ? contexto.nome.trim() : null;
         const metodoLabel = typeof contexto.metodo_pagamento === "string" ? contexto.metodo_pagamento : null;
+        // Factura Legal: f-fatura salva o label "Sim"/"Não"; f-ruc captura o documento.
+        const precisaFatura = String(contexto.precisa_fatura ?? "").trim().toLowerCase().startsWith("s");
+        const ruc = precisaFatura && typeof contexto.ruc === "string" ? contexto.ruc.trim() || null : null;
         try {
           // CRM: upsert do cliente por (org, telefone)
           const { data: cli } = await admin
@@ -361,6 +364,7 @@ export async function POST(request: Request) {
             ...(endereco ? { endereco } : {}),
             ...(lat != null ? { latitude: lat } : {}),
             ...(lng != null ? { longitude: lng } : {}),
+            ...(ruc ? { documento_ruc: ruc } : {}),
           };
           if (clienteId) {
             if (Object.keys(patchCliente).length) await admin.from("clientes").update(patchCliente).eq("id", clienteId);
@@ -375,7 +379,8 @@ export async function POST(request: Request) {
               org_id: orgId, cliente_id: clienteId, distribuidora_id: distId, status: "aguardando_pagamento",
               canal: "whatsapp", moeda: "GS", forma_pagamento: forma, valor_total_gs: total,
               latitude: lat, longitude: lng, endereco_entrega: endereco,
-              observacao: [nomeCliente ? `Cliente: ${nomeCliente}` : null, metodoLabel ? `Pagamento: ${metodoLabel}` : null].filter(Boolean).join(" | ") || null,
+              precisa_fatura: precisaFatura, documento_ruc: ruc,
+              observacao: [nomeCliente ? `Cliente: ${nomeCliente}` : null, metodoLabel ? `Pagamento: ${metodoLabel}` : null, ruc ? `RUC/CI: ${ruc}` : null].filter(Boolean).join(" | ") || null,
             })
             .select("id, numero")
             .single();
@@ -497,10 +502,14 @@ export async function POST(request: Request) {
         // GEO-ROUTING: casa a distribuidora antes de avançar para o checkout.
         const distId = await matchDistribuidora(localizacao.latitude, localizacao.longitude);
         if (!distId) {
-          const msg = "Infelizmente ainda não atendemos esse endereço. 😕 Envie um ponto mais próximo do centro de Ciudad del Este.";
+          // Geofence antecipado: fora de cobertura → aborta educadamente e RESETA a sessão
+          // (limpa estado + carrinho). O cliente recomeça quando quiser mandando "oi".
+          const msg = "Infelizmente ainda não atendemos esse endereço. 😕\n\nSeu pedido não pôde ser concluído. Quando estiver em uma área coberta, é só mandar *oi* para recomeçar. Obrigado pela compreensão! 🙏";
           await enviarTexto(phone, msg, zapiCfg);
           novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
-          novoNoAtual = noEspera.id; // permanece aguardando nova localização
+          carrinho.length = 0;
+          contexto = {};
+          novoNoAtual = null; // reseta a sessão: próximo "oi" começa do zero
           respondeuPorFluxo = true;
         } else {
           contexto = { ...contexto, distribuidora_id: distId };

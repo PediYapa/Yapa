@@ -92,5 +92,17 @@ export async function dispararOrdemDistribuidora(pedidoId: string): Promise<Desp
     .eq("id", pedidoId);
   if (errStatus) return { ok: false, error: errStatus.message };
 
+  // Avisa o cliente que o pagamento foi confirmado e o pedido entrou em separação.
+  // Bot autônomo: a confirmação chega sem passar por atendente. Não bloqueia o despacho.
+  if (cliente?.telefone) {
+    try {
+      await enviarTexto(
+        cliente.telefone,
+        `✅ *Pagamento confirmado!* Seu pedido #${pedido.numero} já está sendo separado e logo sai para entrega. 🛵🍻`,
+        zapiCfg,
+      );
+    } catch { /* não-bloqueante */ }
+  }
+
   return { ok: true, distribuidora: dist.nome };
 }

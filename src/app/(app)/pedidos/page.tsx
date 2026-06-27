@@ -135,6 +135,7 @@ export default async function PedidosPage({
                 <TableHead>Cliente</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Distribuidora</TableHead>
+                <TableHead>RUC/CI</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Criado</TableHead>
                 <TableHead className="w-28"></TableHead>
@@ -153,6 +154,9 @@ export default async function PedidosPage({
                     <TableCell>{cliente?.nome ?? cliente?.telefone ?? "—"}</TableCell>
                     <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
                     <TableCell>{dist?.nome ?? "—"}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {p.documento_ruc ? p.documento_ruc : p.precisa_fatura ? <span className="text-amber-600">a informar</span> : "—"}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{gs(p.valor_total_gs)}</TableCell>
                     <TableCell>{dataHoraBR(p.created_at)}</TableCell>
                     <TableCell className="text-right">
