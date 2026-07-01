@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShoppingBag, Wallet, Bike, CircleDollarSign, PackageCheck, AlertTriangle, Hourglass, TrendingUp } from "lucide-react";
+import { ShoppingBag, Wallet, Bike, CircleDollarSign, PackageCheck, AlertTriangle, Hourglass, TrendingUp, Store, ChevronRight } from "lucide-react";
 import { guard } from "@/lib/auth/guard";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -58,6 +58,21 @@ export default async function DashboardPage() {
         <StatCard label="Aguardando pagamento" value={kpis.aguardandoPagamento} icon={<Hourglass />} />
         <StatCard label="Quebras de pedido" value={kpis.quebras} icon={<AlertTriangle />} hint="exigem ação" />
       </div>
+
+      {/* Acesso rápido — Yapa Partners */}
+      <Link
+        href="/hub/dashboard"
+        className="flex items-center gap-4 rounded-2xl border border-border bg-card px-5 py-4 transition-colors hover:border-[#FFCC00]/60 hover:bg-card/80"
+      >
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#FFCC00]/10 text-[#FFCC00]">
+          <Store className="size-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="font-semibold">Yapa Partners — Supervisão de Hubs</p>
+          <p className="text-sm text-muted-foreground">Gerencie o estoque físico dos distribuidores parceiros.</p>
+        </div>
+        <ChevronRight className="ml-auto size-5 shrink-0 text-muted-foreground" />
+      </Link>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">

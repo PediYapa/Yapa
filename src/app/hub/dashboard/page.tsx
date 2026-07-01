@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Boxes, TriangleAlert, Store } from "lucide-react";
+import { Boxes, TriangleAlert, Store, ChevronLeft } from "lucide-react";
 import { guardHub } from "@/lib/auth/hub-guard";
 import { EstoqueClient, type ItemEstoque } from "./estoque-client";
 
@@ -87,6 +87,15 @@ export default async function HubDashboardPage({
 
   return (
     <div>
+      {isAdmin && (
+        <Link
+          href="/hub/dashboard"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm text-neutral-400 transition-colors hover:text-[#FFCC00]"
+        >
+          <ChevronLeft className="size-4" />
+          Trocar hub
+        </Link>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold">{hubInfo?.nome ?? "Meu Estoque"}</h1>
