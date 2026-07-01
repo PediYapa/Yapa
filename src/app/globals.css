@@ -23,10 +23,10 @@
   --popover-foreground: var(--foreground);
 
   /* marca */
-  --primary: oklch(0.52 0.18 295);          /* Uva — violeta noturno */
-  --primary-foreground: oklch(0.99 0.01 295);
-  --accent: oklch(0.8 0.15 82);             /* Âmbar — cerveja/ouro */
-  --accent-foreground: oklch(0.28 0.05 82);
+  --primary: oklch(0.88 0.19 97);           /* Amarelo Yapa — #FFCC00 */
+  --primary-foreground: oklch(0.13 0 0);    /* preto para contraste */
+  --accent: oklch(0.88 0.19 97);
+  --accent-foreground: oklch(0.13 0 0);
 
   /* neutros */
   --secondary: oklch(0.96 0.01 300);
@@ -46,11 +46,11 @@
   --destructive-foreground: oklch(0.99 0.01 25);
 
   /* gráficos (recharts) */
-  --chart-1: oklch(0.52 0.18 295);          /* uva */
-  --chart-2: oklch(0.8 0.15 82);            /* âmbar */
-  --chart-3: oklch(0.62 0.14 155);          /* verde */
-  --chart-4: oklch(0.64 0.18 12);           /* coral/vermelho festivo */
-  --chart-5: oklch(0.6 0.13 250);           /* azul noite */
+  --chart-1: oklch(0.88 0.19 97);           /* Amarelo Yapa */
+  --chart-2: oklch(0.62 0.14 155);          /* verde */
+  --chart-3: oklch(0.64 0.18 12);           /* coral */
+  --chart-4: oklch(0.6 0.13 250);           /* azul */
+  --chart-5: oklch(0.52 0.18 295);          /* violeta */
 
   --sidebar: oklch(0.99 0.005 300);
   --sidebar-foreground: var(--foreground);
@@ -73,10 +73,10 @@
   --popover: oklch(0.25 0.03 300);
   --popover-foreground: var(--foreground);
 
-  --primary: oklch(0.72 0.15 295);
-  --primary-foreground: oklch(0.18 0.03 300);
-  --accent: oklch(0.8 0.15 82);
-  --accent-foreground: oklch(0.2 0.04 82);
+  --primary: oklch(0.88 0.19 97);           /* Amarelo Yapa no escuro */
+  --primary-foreground: oklch(0.13 0 0);
+  --accent: oklch(0.88 0.19 97);
+  --accent-foreground: oklch(0.13 0 0);
 
   --secondary: oklch(0.3 0.03 300);
   --secondary-foreground: oklch(0.9 0.015 300);
@@ -93,11 +93,11 @@
   --destructive: oklch(0.66 0.19 25);
   --destructive-foreground: oklch(0.98 0.01 25);
 
-  --chart-1: oklch(0.72 0.15 295);
-  --chart-2: oklch(0.8 0.15 82);
-  --chart-3: oklch(0.73 0.13 155);
-  --chart-4: oklch(0.7 0.17 12);
-  --chart-5: oklch(0.66 0.12 250);
+  --chart-1: oklch(0.88 0.19 97);           /* Amarelo Yapa */
+  --chart-2: oklch(0.73 0.13 155);
+  --chart-3: oklch(0.7 0.17 12);
+  --chart-4: oklch(0.66 0.12 250);
+  --chart-5: oklch(0.72 0.15 295);
 
   --sidebar: oklch(0.23 0.03 300);
   --sidebar-foreground: var(--foreground);
