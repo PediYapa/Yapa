@@ -9,10 +9,20 @@
 
 Plataforma de delivery de bebidas em **Ciudad del Este (PY)**.
 
-**Jornada completa (validada em produção):**
-Cliente manda "oi" → bot conversa (gate de idade → menu de categorias → produto → formato/sabor → quantidade → mais itens? → nome → PIN de localização) → distribuidora roteada por geo → resumo de checkout → handoff para atendente → despacho → entrega.
+**Jornada completa V3.0 (validada em produção):**
+Cliente manda "oi" → bot conversa:
+1. **Geofencing antecipado** — solicita PIN de localização → fora do raio: aborta e reseta sessão completamente
+2. **Endereço escrito** — captura texto livre do endereço
+3. **Nome** — captura nome do cliente
+4. **Menu → produto → formato/sabor → quantidade → mais itens?**
+5. **Factura Legal** — botão Sim/Não (`precisa_fatura`)
+6. **RUC/CI** — captura só se respondeu Sim (nó `f-ruc`)
+7. **Checkout autônomo** — bot gera link dLocal e envia diretamente (sem handoff humano)
+8. **Confirmação de pagamento** → notifica cliente por WhatsApp e move pedido para `em_separacao`
 
-Gestão interna: pedidos, atendimento, distribuidoras, entregadores, catálogo, financeiro, fluxos do bot.
+Gestão interna: pedidos, atendimento, distribuidoras, entregadores, catálogo, financeiro, faturas, fluxos do bot.
+
+**Yapa Partners:** portal B2B em `/hub` para distribuidores parceiros gerenciarem estoque físico (quantidade de caixas). Sem acesso a dados financeiros.
 
 ---
 
@@ -29,8 +39,8 @@ Gestão interna: pedidos, atendimento, distribuidoras, entregadores, catálogo, 
 | Ícones | lucide-react |
 | Validação | zod + react-hook-form |
 | Bot WhatsApp | Z-API (não-oficial) |
-| Pagamentos | DLocal (GS/Pix) |
-| IA | OpenAI (fallback de intenção quando sem fluxo ativo) |
+| Pagamentos | dLocal Go API (GS + PIX aberto — sem `country` no payload) |
+| IA | OpenAI `gpt-4o-mini` — motor WIP de estoque + fallback de intenção do bot |
 | Geo | PostGIS: extensões `cube` + `earthdistance`, RPC `yapa.match_distribuidora` |
 
 ---
@@ -39,8 +49,10 @@ Gestão interna: pedidos, atendimento, distribuidoras, entregadores, catálogo, 
 
 ### Superfícies
 - **UI interna** — Server Components + Server Actions (`src/app/actions/`), sessão Supabase + RLS.
-- **Webhooks** — `/api/webhooks/whatsapp` (Z-API inbound), `/api/webhooks/pagamento` (DLocal).
+- **Portal Hub** — `/hub/*`, role `hub`, isolamento financeiro total.
+- **Webhooks** — `/api/webhooks/whatsapp` (Z-API inbound), `/api/webhooks/dlocal` (confirmação de pagamento GET-confirm).
 - **API pública** — `/api/v1/*`, Bearer token (`requireToken`).
+- **API Hub** — `/api/hub/wip` (produto único WIP), `/api/hub/import-csv` (importação em lote).
 
 ### Motor do bot (`src/lib/intel/`) — PURO, sem I/O, testável
 | Arquivo | Responsabilidade |
@@ -50,17 +62,18 @@ Gestão interna: pedidos, atendimento, distribuidoras, entregadores, catálogo, 
 | `sessao-whatsapp.ts` | Persistência do carrinho em `sessoes_whatsapp` |
 | `cambio.ts` | Conversão GS/BRL |
 
-### Funções puras exportadas do engine (não misturar com I/O)
-- `executarFluxo(fluxo, estado, texto, resolveProduto, localizacao?)` → `ResultadoFluxo`
-- `calcularSubtotal(precoUnit, precoCaixa, formato, quantidade)` → `number`
-- `montarResumoCheckout(carrinho)` → `{ texto, total }`
-- `tipoEntidadeDoNo(node)` → `EntidadeTipo | null`
-
 ### Auth
-Supabase Auth + `src/middleware.ts`. RBAC: `user_profiles.role` (`owner|gerente|operador`) + `module_permissions` (jsonb). Função `can()` em `lib/auth/permissions.ts`.
+Supabase Auth + `src/middleware.ts`. RBAC: `user_profiles.role` (`owner|gerente|operador|hub`) + `module_permissions` (jsonb).
+- `can()` em `lib/auth/permissions.ts` — role `hub` retorna `false` para tudo (portal separado).
+- `guardHub()` em `lib/auth/hub-guard.ts` — portão do `/hub`, resolve `distribuidora_id` ativa.
 
 ### RLS
-Isolamento por `org_id` — `db/rls.sql`. Política macro `{tabela}_all_same_org`. Controle fino nos Server Actions.
+Isolamento por `org_id` — `db/rls.sql`. Política macro `{tabela}_all_same_org`.
+- `estoque_hub`: parceiros hub veem só a própria distribuidora; owners/gerentes veem todas (migration 012).
+- Helpers: `current_org_id()`, `is_manager()`, `current_distribuidora_id()`.
+
+### Isolamento financeiro no portal Hub
+Dupla camada: RLS em `estoque_hub` + queries da UI **nunca selecionam** `preco_gs`. Só `id` e `nome` de produtos trafegam para o cliente hub.
 
 ---
 
@@ -72,23 +85,45 @@ db/
   rls.sql              ← Row Level Security
   seed.sql             ← dados de demo
   migrations/
-    001–008_*.sql      ← aplicadas em produção
+    001–012_*.sql      ← todas aplicadas em produção
 
 src/
-  middleware.ts
-  app/(app)/<modulo>/          ← 1 pasta por módulo
-  app/actions/<modulo>.ts      ← Server Actions por módulo
-  app/api/webhooks/whatsapp/   ← motor do bot (webhook principal)
+  middleware.ts        ← roteamento por role (hub → /hub/dashboard, etc.)
+  app/
+    page.tsx           ← landing page pública (dark + hero amarelo)
+    login/             ← login único (middleware redireciona por role)
+    (app)/             ← dashboard interno (admin/gerente/operador)
+      dashboard/       ← KPIs + card de acesso rápido ao hub
+      pedidos/         ← inclui colunas RUC/CI e precisa_fatura
+      faturas/         ← pedidos com fatura legal, export CSV
+      clientes/        ← inclui coluna RUC/CI
+      usuarios/        ← inclui papel 'hub (parceiro)'
+      ...
+    hub/               ← portal Yapa Partners
+      layout.tsx       ← dark mode, Amarelo Yapa, mobile-first
+      dashboard/       ← estoque por distribuidora, WIP motor, CSV import
+    actions/
+      hub.ts           ← atualizarQuantidadeEstoque, removerEstoque
+    api/
+      hub/
+        wip/           ← POST — adicionar produto único via IA
+        import-csv/    ← POST — importação em lote CSV + IA (maxDuration 60s)
+      webhooks/
+        whatsapp/      ← motor do bot V3.0
+        dlocal/        ← GET-confirm pattern (segurança anti-falsificação)
   lib/
     supabase/{server,admin,client}.ts
-    auth/{guard,permissions,session}.ts
+    auth/{guard,permissions,session,hub-guard}.ts
     intel/             ← motor puro do bot
-    integrations/{zapi,openai,dlocal}.ts
+    hub/
+      wip-matcher.ts   ← casamento determinístico + OpenAI em lote
+    dlocal.ts          ← createPaymentLink (sem country), getPayment, AbortSignal.timeout
+    despacho.ts        ← notifica cliente WhatsApp ao confirmar pagamento
     database.types.ts
     format.ts          ← gs(), brl(), dataBR(), telBR()
   components/{ui,layout}/
 
-docs/specs/            ← specs SDD de cada funcionalidade
+docs/specs/            ← specs SDD de cada funcionalidade (ver §10)
 ```
 
 ---
@@ -99,15 +134,29 @@ docs/specs/            ← specs SDD de cada funcionalidade
 2. **Server Actions:** `"use server"` → `guard(modulo, "write")` → `safeParse` zod → mutação → `revalidatePath`. **Nunca `parse`** — oculta o erro real.
 3. **Leituras:** Server Components + `guard(modulo, "read")`, sempre `.is("deleted_at", null)` + `.limit(1)` em buscas por unicidade.
 4. **org_id:** nunca do input — sempre `profile.org_id` (UI) ou token (API).
-5. **Dinheiro:** tudo em **Guarani (GS)**; Pix converte via `cambio.ts`; formatar via `format.ts`.
+5. **Dinheiro:** tudo em **Guarani (GS)**; Pix converte via `cambio.ts`; formatar via `format.ts`. Hub nunca vê preço.
 6. **Segredos:** service-role só em `lib/supabase/admin.ts`. `.env*` nunca commitado.
-7. **Idioma:** pt-BR em toda a UI.
+7. **Idioma:** pt-BR em toda a UI interna; es em landing page pública.
 8. **Migrations:** usar `mcp__claude_ai_Supabase__apply_migration` (DDL) e `execute_sql` (DML/queries). Sempre testar antes de aplicar.
 9. **Deploy:** GitHub push → Vercel auto-deploy. Se não disparar: `npx vercel --prod` na raiz do projeto.
+10. **Fetch externo:** sempre `AbortSignal.timeout(ms)` — sem timeout o webhook Z-API cai (Status 0).
+11. **OpenAI no hub:** fetch nativo (sem `@ai-sdk`), `response_format: json_object`, temperatura 0.
 
 ---
 
-## 6. Conhecimento crítico do Z-API
+## 6. Identidade visual
+
+- **Cor primária:** Amarelo Yapa `#FFCC00` → `oklch(0.88 0.19 97)` com foreground preto `oklch(0.13 0 0)`.
+- **Dark mode base:** `neutral-950` / `neutral-900` / `neutral-800`.
+- **Tipografia:** Inter (sans) + Fraunces (display/serif para headings especiais).
+- **Landing page:** hero com fundo `#FFCC00`, texto preto bold; restante dark.
+- **Login:** painel esquerdo amarelo + preto; formulário em `neutral-950`.
+- **Portal Hub:** 100% dark (`bg-neutral-950`), acentos em `#FFCC00`.
+- **Dashboard interno:** dark mode via cookie `yapa_theme=dark`.
+
+---
+
+## 7. Conhecimento crítico do Z-API
 
 ### Tipos de mensagem recebida (detectar pelo CAMPO, não pelo `type`)
 
@@ -135,7 +184,7 @@ O Z-API sempre envia `type: "ReceivedCallback"` — **nunca use o type como disc
 
 ---
 
-## 7. Motor do bot — estado e fluxo de dados
+## 8. Motor do bot — estado e fluxo de dados
 
 ### Fonte de verdade do estado
 - **`conversas.fluxo_estado`** (JSONB) — posição no fluxo + contexto intermediário:
@@ -145,23 +194,25 @@ O Z-API sempre envia `type: "ReceivedCallback"` — **nunca use o type como disc
     "no_atual": "f-menu",
     "atualizado_em": "...",
     "contexto": {
-      "item_pendente": { "produto_id": "...", "nome": "Pod Black Sheep", "preco_gs": 90000, "preco_caixa": null },
+      "item_pendente": { "produto_id": "...", "nome": "Pod Black Sheep", "preco_gs": 90000 },
       "formato": "Caixa",
       "aguardando_sabor": true,
       "distribuidora_id": "...",
       "latitude": -25.52,
       "longitude": -54.61,
-      "nome": "Thales"
+      "nome": "Thales",
+      "precisa_fatura": "sim",
+      "ruc": "9373240-6"
     }
   }
   ```
-- **`sessoes_whatsapp.carrinho`** — array de `CarrinhoItem` acumulado:
-  ```json
-  [{ "produto_id": "...", "nome": "Michelob - Caixa", "formato": "Caixa", "quantidade": 2, "preco": 5000, "subtotal": 56400 }]
-  ```
+- **`sessoes_whatsapp.carrinho`** — array de `CarrinhoItem` acumulado.
 
 ### Palavras de reinício automático
 "oi", "olá", "menu", "reiniciar", "comecar", "hey", "hi" — engine ignora `fluxo_estado` e começa do nó de início.
+
+### Geofencing (V3.0)
+Ocorre **antes** do menu. Fora do raio → reseta sessão **completamente** (`carrinho = []`, `contexto = {}`, `novoNoAtual = null`) e envia mensagem de área não coberta.
 
 ### Reset manual no banco
 ```sql
@@ -174,16 +225,16 @@ DELETE FROM yapa.sessoes_whatsapp WHERE telefone = '595...';
 | Tipo | Comportamento |
 |------|--------------|
 | `inicio` | Entrada, não emite |
-| `texto` | Emite e avança |
+| `texto` | Emite e avança (V3.0: `f-checkout` é `texto`, não `humano`) |
 | `imagem` | Emite e avança |
-| `botoes` | Emite e **pausa** (aguarda clique). Com `salvar_em_contexto`: salva label no contexto e usa aresta do botão ou padrão |
-| `produto` | Entidade dinâmica: pausa, webhook lista do banco filtrado por `categoria`. Com `pede_quantidade: true`: guarda em `item_pendente` em vez de adicionar direto ao carrinho |
-| `captura` | Pausa e aguarda texto livre. `variavel="quantidade"` finaliza o carrinho com subtotal |
+| `botoes` | Emite e **pausa**. Com `salvar_em_contexto`: salva label no contexto |
+| `produto` | Entidade dinâmica: pausa, lista produtos por `categoria`. Com `pede_quantidade: true` |
+| `captura` | Pausa e aguarda texto livre. `variavel="quantidade"` finaliza carrinho |
 | `location_capture` | Pausa e aguarda PIN ou endereço digitado |
-| `humano` | Aciona handoff e encerra fluxo |
+| `humano` | Aciona handoff — **NÃO usar em f-checkout** (V3.0 é autônomo) |
 
 ### Funil dinâmico de sabor (pods)
-Quando produto tem `opcoes_variacao`, o webhook injeta etapa virtual via `contexto.aguardando_sabor = true`. O sabor concatena ao nome: `"Pod Black Sheep - menta"`. Depois retoma a captura de quantidade.
+Quando produto tem `opcoes_variacao`, webhook injeta etapa virtual via `contexto.aguardando_sabor = true`.
 
 ### Matemática do carrinho
 `calcularSubtotal(precoUnit, precoCaixa, formato, qtd)`:
@@ -192,18 +243,60 @@ Quando produto tem `opcoes_variacao`, o webhook injeta etapa virtual via `contex
 
 ---
 
-## 8. Geo-routing
+## 9. Integração dLocal
+
+- **Endpoint:** `https://api.dlocalgo.com` (validado por regex; env var inválida cai no default).
+- **Payload `createPaymentLink`:** sem `country` → gera "link abierto" (PIX aparece para clientes BR).
+- **Timeout:** `AbortSignal.timeout(12000)` para criar, `8000` para consultar.
+- **Webhook de confirmação:** pattern GET-confirm (bot consulta a API dLocal via `getPayment` para validar, não confia no payload do webhook).
+- **Campos no pedido:** `gateway_id` (string do link), `gateway_status` (string do status dLocal).
+- **Ao confirmar pagamento (PAID):** `despacho.ts` move pedido para `em_separacao` + notifica cliente por WhatsApp.
+
+---
+
+## 10. Geo-routing
 
 RPC `yapa.match_distribuidora(user_lat, user_lng)`:
 - Usa `earthdistance` (extensões `cube` + `earthdistance` ativas no Supabase).
-- Reutiliza coluna `yapa.distribuidoras.raio_km`.
 - Retorna `uuid` da distribuidora mais próxima cujo raio cobre o ponto, ou `null` se fora de cobertura.
-- Fallback: bot informa cliente que está fora da área e permanece no nó aguardando novo PIN.
 - Migration: `db/migrations/008_geo_match_distribuidora.sql`.
 
 ---
 
-## 9. Categorias de produto
+## 11. Yapa Partners (portal Hub)
+
+### Conceito
+15 distribuidores parceiros gerenciam **apenas quantidade física de caixas** no portal `/hub`. Zero dados financeiros.
+
+### Acesso
+- Role `hub` no `user_profiles.role`.
+- `distribuidora_id` no `user_profiles.distribuidora_id` vincula o parceiro.
+- Login único (`/login`) → middleware redireciona para `/hub/dashboard`.
+- Admin pode supervisionar qualquer hub via `?hub=<distribuidora_id>`.
+
+### Criar parceiro (manual)
+1. Supabase Auth → criar usuário com e-mail/senha.
+2. SQL:
+```sql
+UPDATE yapa.user_profiles
+SET role = 'hub', distribuidora_id = '<uuid>'
+WHERE id = '<auth_user_id>';
+```
+
+### Motor WIP
+- `src/lib/hub/wip-matcher.ts` — casamento nome sujo → `produto_id` do catálogo.
+- Estratégia: determinístico (token overlap ≥ 0.34) + OpenAI `gpt-4o-mini` como árbitro.
+- `casarLoteWip()`: lote inteiro em **uma chamada** à IA (máx. 500 linhas, timeout 25s).
+- `parseQuantidade()`: converte "50 caixas", "1.200", "12un" → inteiro.
+
+### CSV Import
+- Rota: `POST /api/hub/import-csv` (`maxDuration = 60`).
+- Parser nativo (sem dependência): detecta delimitador (`;`,`,`,tab), header por keyword, quote-aware.
+- UPSERT com sobrescrever: conflito `(distribuidora_id, produto_id)` → atualiza quantidade.
+
+---
+
+## 12. Categorias de produto
 
 | Valor no banco | Label na UI | Campos extras |
 |---------------|------------|--------------|
@@ -216,7 +309,7 @@ RPC `yapa.match_distribuidora(user_lat, user_lng)`:
 
 ---
 
-## 10. Fluxo SDD (antes de qualquer código novo)
+## 13. Fluxo SDD (antes de qualquer código novo)
 
 **Toda funcionalidade começa por uma spec em `docs/specs/<slug>.md`.**
 
@@ -235,7 +328,7 @@ Descreva o **o quê** e o **problema**, não o como. O Claude decide a implement
 
 ## Banco de dados (novas colunas/tabelas?)
 
-## Integrações (Z-API, DLocal, geo, OpenAI?)
+## Integrações (Z-API, dLocal, geo, OpenAI?)
 
 ## Critérios de aceite
 - [ ] ...
@@ -252,22 +345,24 @@ Descreva o **o quê** e o **problema**, não o como. O Claude decide a implement
 
 ---
 
-## 11. Regras de segurança e deploy (BLOQUEIO ABSOLUTO)
+## 14. Regras de segurança e deploy (BLOQUEIO ABSOLUTO)
 
 - **Git/GitHub/Vercel:** SOMENTE o usuário `Pedi Yapa` (`admin@pediyapa.com`). Nunca 'Aurum Clinic'.
 - **Commits:** sempre com `Co-Authored-By: Pedi Yapa <admin@pediyapa.com>`.
 - **Push para `main`:** requer autorização explícita do Thales na conversa corrente.
 - **DDL no banco (`schema.sql`, `rls.sql`):** pausar e apresentar diff para aprovação.
 - **Migrations via MCP:** usar `apply_migration` para DDL, `execute_sql` para DML/queries.
+- **dLocal:** nunca expor `DLOCAL_SECRET` em logs ou respostas de API.
 
 ---
 
-## 12. Autonomia de execução
+## 15. Autonomia de execução
 
 **Executar diretamente (sem confirmar):**
 - Componentes React, ajustes de Tailwind, Server Actions CRUD, fixes de validação.
 - Correções de bug pontuais identificadas nos logs.
 - Aplicar o fluxo corretamente no banco via MCP quando o import do builder falha.
+- Data de seed/teste no banco (DML).
 
 **Pausar e pedir aprovação:**
 - Mudanças em `db/schema.sql` ou `db/rls.sql`.
@@ -276,7 +371,7 @@ Descreva o **o quê** e o **problema**, não o como. O Claude decide a implement
 
 ---
 
-## 13. Verificação antes de commitar
+## 16. Verificação antes de commitar
 
 ```bash
 npm run typecheck   # zero erros
@@ -287,7 +382,7 @@ Após DDL: `mcp__claude_ai_Supabase__get_advisors` (security + performance).
 
 ---
 
-## 14. Migrations aplicadas em produção
+## 17. Migrations aplicadas em produção
 
 | # | Arquivo | O que faz |
 |---|---------|-----------|
@@ -299,3 +394,7 @@ Após DDL: `mcp__claude_ai_Supabase__get_advisors` (security + performance).
 | 006 | `006_produtos_caixa_variacao.sql` | `preco_caixa`, `unidades_por_caixa`, `opcoes_variacao` em produtos |
 | 007 | `007_rename_produto_categorias.sql` | `voucher→conveniencia`, `outro→combo` |
 | 008 | `008_geo_match_distribuidora.sql` | Extensões geo + RPC `match_distribuidora` |
+| 009 | `009_bot_v3_flow_reorder.sql` | Reordena fluxo V3.0 (geo primeiro, checkout autônomo) |
+| 010 | `010_faturacao_e_gateway.sql` | `precisa_fatura`, `documento_ruc` em pedidos; `documento_ruc` em clientes; restaura `gateway_id`/`gateway_status` |
+| 011 | `011_yapa_partners_estoque_hub.sql` | Tabela `estoque_hub`, role `hub`, `distribuidora_id` em user_profiles, `tipo` em distribuidoras, RLS hub |
+| 012 | `012_rls_estoque_hub_admin_read.sql` | RLS estoque_hub: owners/gerentes leem qualquer hub da org |
