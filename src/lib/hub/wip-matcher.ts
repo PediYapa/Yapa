@@ -35,6 +35,90 @@ function casarDeterministico(textoSujo: string, catalogo: ProdutoCatalogo[]): Pr
   return melhor && melhor.score >= 0.34 ? melhor.p : null;
 }
 
+/** Converte uma quantidade suja ("50 caixas", "1.200", "12un") em inteiro >= 0. */
+export function parseQuantidade(qtd: string | number | null | undefined): number {
+  if (typeof qtd === "number") return Number.isFinite(qtd) ? Math.max(0, Math.min(999999, Math.floor(qtd))) : 0;
+  const digitos = String(qtd ?? "").replace(/[^\d]/g, "");
+  if (!digitos) return 0;
+  const n = parseInt(digitos, 10);
+  return Number.isFinite(n) ? Math.min(n, 999999) : 0;
+}
+
+export type LinhaSuja = { nome_sujo: string; qtd: string | number };
+export type LoteMatch = { produto_id: string; nome: string; quantidade: number };
+
+/**
+ * Versão em lote do motor WIP (importação de CSV). Casa cada linha suja com o
+ * catálogo mestre e devolve os itens reconhecidos (produto_id + quantidade
+ * numérica), deduplicados por produto (última linha vence = sobrescrever).
+ *
+ * Uma única chamada à IA para todo o lote; fallback determinístico por item.
+ */
+export async function casarLoteWip(
+  linhas: LinhaSuja[],
+  catalogo: ProdutoCatalogo[],
+): Promise<LoteMatch[]> {
+  if (catalogo.length === 0 || linhas.length === 0) return [];
+  const porId = new Map(catalogo.map((p) => [p.id, p]));
+
+  const baseline = linhas.map((l) => casarDeterministico(l.nome_sujo, catalogo));
+  const idsIA = await matchLoteIA(linhas, catalogo);
+
+  const resolvidos = new Map<string, LoteMatch>(); // produto_id → match (dedupe, overwrite)
+  linhas.forEach((l, i) => {
+    const idIa = idsIA && idsIA[i] && porId.has(idsIA[i]!) ? idsIA[i]! : null;
+    const prod = idIa ? porId.get(idIa)! : baseline[i];
+    if (!prod) return;
+    resolvidos.set(prod.id, { produto_id: prod.id, nome: prod.nome, quantidade: parseQuantidade(l.qtd) });
+  });
+  return [...resolvidos.values()];
+}
+
+/** Uma chamada à IA para o lote → array de produto_id (ou null) alinhado ao índice. */
+async function matchLoteIA(linhas: LinhaSuja[], catalogo: ProdutoCatalogo[]): Promise<(string | null)[] | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  try {
+    const lista = catalogo.map((p) => `${p.id} :: ${p.nome}`).join("\n");
+    const sujas = linhas.map((l, i) => `${i}: "${l.nome_sujo}"`).join("\n");
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          { role: "system", content: SYS },
+          {
+            role: "user",
+            content:
+              `Catálogo (id :: nome):\n${lista}\n\n` +
+              `Entradas sujas (indice: "texto"):\n${sujas}\n\n` +
+              `Para cada índice, escolha o produto_id do catálogo que corresponde, ou "" se nenhum. ` +
+              `Responda em JSON: {"itens":[{"i":<indice>,"produto_id":"<id ou vazio>"}]}`,
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    const parsed = content ? (JSON.parse(content) as { itens?: { i: number; produto_id?: string }[] }) : {};
+    const out: (string | null)[] = new Array(linhas.length).fill(null);
+    for (const m of parsed.itens ?? []) {
+      if (typeof m.i === "number" && m.i >= 0 && m.i < linhas.length) {
+        const id = String(m.produto_id || "").trim();
+        out[m.i] = id || null;
+      }
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 export async function casarProdutoWip(
   textoSujo: string,
   catalogo: ProdutoCatalogo[],
