@@ -22,6 +22,7 @@ const PAPEL_META: Record<UserRole, { label: string; variant: "primary" | "accent
   owner: { label: "Owner", variant: "primary" },
   gerente: { label: "Gerente", variant: "accent" },
   operador: { label: "Operador", variant: "outline" },
+  hub: { label: "Hub (parceiro)", variant: "outline" },
 };
 
 function SubmitButton() {

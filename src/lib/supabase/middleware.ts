@@ -50,7 +50,7 @@ export async function updateSession(request: NextRequest) {
   // o loop /login → /dashboard → /login.
   const { data: profile } = await supabase
     .from("user_profiles")
-    .select("deactivated_at")
+    .select("deactivated_at, role")
     .eq("id", user.id)
     .maybeSingle();
   const sessaoInvalida = !profile || !!profile.deactivated_at;
@@ -68,8 +68,31 @@ export async function updateSession(request: NextRequest) {
     return redirect;
   }
 
-  // Sessão válida tentando /login → dashboard
+  // Rotas de API autenticadas (ex.: /api/hub/*) não sofrem redirect de UI —
+  // apenas precisam da sessão já validada acima.
+  if (pathname.startsWith("/api/")) return response;
+
+  // Roteamento por papel: o parceiro (hub) vive isolado no portal /hub.
+  const isHub = profile!.role === "hub";
+  const isAdmin = profile!.role === "owner" || profile!.role === "gerente";
+  const emHub = pathname === "/hub" || pathname.startsWith("/hub/");
+
+  // Sessão válida tentando /login → destino conforme o papel
   if (pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = isHub ? "/hub/dashboard" : "/dashboard";
+    return NextResponse.redirect(url);
+  }
+
+  // Hub tentando o app administrativo → volta ao portal
+  if (isHub && !emHub && !isPublic) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/hub/dashboard";
+    return NextResponse.redirect(url);
+  }
+
+  // Portal /hub restrito a hub + admin (supervisão); operador fica de fora
+  if (emHub && !isHub && !isAdmin) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);

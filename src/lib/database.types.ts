@@ -9,7 +9,7 @@
  * e substituir este arquivo.
  */
 
-export type UserRole = "owner" | "gerente" | "operador";
+export type UserRole = "owner" | "gerente" | "operador" | "hub";
 export type ProdutoCategoria = "cerveja" | "destilado" | "pod" | "conveniencia" | "combo";
 export type PedidoStatus =
   | "recebido" | "aguardando_pagamento" | "pago" | "roteado" | "em_separacao"
@@ -40,6 +40,7 @@ export type UserProfileRow = {
   nome: string;
   role: UserRole;
   module_permissions: Record<string, ("read" | "write")[]>;
+  distribuidora_id: string | null;
   deactivated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -79,10 +80,23 @@ export type DistribuidoraRow = {
   recebe_dinheiro: boolean;
   saldo_d1_gs: number;
   ativo: boolean;
+  tipo: string | null;
   notas: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+};
+
+/** Estoque físico de um produto num hub (pivô N:M). Nunca carrega preço. */
+export type EstoqueHubRow = {
+  id: string;
+  org_id: string;
+  distribuidora_id: string;
+  produto_id: string;
+  quantidade: number;
+  disponivel: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ProdutoRow = {
@@ -353,6 +367,7 @@ export type Database = {
       fluxos: TableShape<FluxoRow>;
       contatos: TableShape<ContatoRow>;
       sessoes_whatsapp: TableShape<SessaoWhatsappRow>;
+      estoque_hub: TableShape<EstoqueHubRow>;
     };
     Views: {
       clientes_metricas: { Row: ClienteMetricasRow; Relationships: [] };

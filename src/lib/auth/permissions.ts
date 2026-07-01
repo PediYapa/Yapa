@@ -55,6 +55,9 @@ export function can(
   module: Module,
   action: Action = "read",
 ): boolean {
+  // hub (parceiro B2B): não acessa o app administrativo — vive só no portal /hub.
+  if (profile.role === "hub") return false;
+
   if (profile.role === "owner" || profile.role === "gerente") return true;
 
   // operador
