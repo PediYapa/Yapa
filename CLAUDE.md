@@ -137,7 +137,7 @@ docs/specs/            ← specs SDD de cada funcionalidade (ver §10)
 5. **Dinheiro:** tudo em **Guarani (GS)**; Pix converte via `cambio.ts`; formatar via `format.ts`. Hub nunca vê preço.
 6. **Segredos:** service-role só em `lib/supabase/admin.ts`. `.env*` nunca commitado.
 7. **Idioma:** pt-BR em toda a UI interna; es em landing page pública.
-8. **Migrations:** usar `mcp__claude_ai_Supabase__apply_migration` (DDL) e `execute_sql` (DML/queries). Sempre testar antes de aplicar.
+8. **Migrations:** usar `mcp__claude_ai_Supabase__apply_migration` (DDL) e `execute_sql` (DML/queries). Sempre testar antes de aplicar. **Coluna `serial`/`bigserial` nova:** a sequência criada NÃO herda os grants do provisionamento inicial (`grant all on all sequences` só roda em `db/schema.sql`) — sempre incluir `GRANT USAGE, SELECT ON SEQUENCE yapa.<nome> TO anon, authenticated, service_role;` na mesma migration (ver bug real: migration 015).
 9. **Deploy:** GitHub push → Vercel auto-deploy. Se não disparar: `npx vercel --prod` na raiz do projeto.
 10. **Fetch externo:** sempre `AbortSignal.timeout(ms)` — sem timeout o webhook Z-API cai (Status 0).
 11. **OpenAI no hub:** fetch nativo (sem `@ai-sdk`), `response_format: json_object`, temperatura 0.
@@ -418,3 +418,4 @@ Após DDL: `mcp__claude_ai_Supabase__get_advisors` (security + performance).
 | 012 | `012_rls_estoque_hub_admin_read.sql` | RLS estoque_hub: owners/gerentes leem qualquer hub da org |
 | 013 | `013_dispatch_motoboys.sql` | Dispatch de motoboys: tabela `motoboys`, `grupo_motoboys_id` em distribuidoras, frete/corrida em pedidos |
 | 014 | `014_consolidar_frota_motoboys.sql` | Aposenta `entregadores` (legado Fase 1); `entregas`/`rotas`/`gps_pings` repointam `entregador_id`→`motoboy_id`; contador migra p/ `motoboys` |
+| 015 | `015_grant_sequence_numero_corrida.sql` | Fix: grants ausentes em `pedidos_numero_corrida_seq` (serial criada por migration não herda `grant all on all sequences` do provisionamento inicial) |
