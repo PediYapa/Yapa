@@ -133,16 +133,16 @@ export async function montarListaEntidade(
         return resolverModo(node, labels, "Qual unidade você prefere?", "Nenhum hub disponível no momento.");
       }
       case "entregador": {
+        // Consolidado em motoboys (a tabela entregadores foi aposentada).
         const { data, error } = await admin
-          .from("entregadores")
+          .from("motoboys")
           .select("nome")
           .eq("org_id", orgId)
           .eq("ativo", true)
-          .is("deleted_at", null)
           .order("nome");
         if (error) return null;
-        const labels = (data ?? []).map((e) => e.nome);
-        return resolverModo(node, labels, "Qual entregador?", "Nenhum entregador disponível no momento.");
+        const labels = (data ?? []).map((m) => m.nome);
+        return resolverModo(node, labels, "Qual motoboy?", "Nenhum motoboy disponível no momento.");
       }
     }
   } catch {

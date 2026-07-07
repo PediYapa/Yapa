@@ -2,7 +2,7 @@
  * Metadados de status do pedido — rótulos, cor do badge e transições válidas.
  * Fonte única para UI e Server Actions (evita strings soltas).
  */
-import type { PedidoStatus, EntregaStatus, PagamentoStatus } from "@/lib/database.types";
+import type { PedidoStatus, EntregaStatus, PagamentoStatus, StatusEntregaMotoboy } from "@/lib/database.types";
 
 type BadgeVariant = "default" | "primary" | "accent" | "success" | "warning" | "destructive" | "outline";
 
@@ -59,6 +59,14 @@ export const ENTREGA_STATUS_META: Record<EntregaStatus, { label: string; variant
   em_entrega: { label: "Em entrega", variant: "accent" },
   entregue: { label: "Entregue", variant: "success" },
   cancelada: { label: "Cancelada", variant: "destructive" },
+};
+
+/** Entrega por motoboy via grupo de WhatsApp (pedidos.status_entrega). */
+export const STATUS_ENTREGA_MOTOBOY_META: Record<StatusEntregaMotoboy, { label: string; variant: BadgeVariant }> = {
+  aguardando_motoboy: { label: "Aguardando motoboy", variant: "warning" },
+  atribuido: { label: "Motoboy atribuído", variant: "primary" },
+  em_rota: { label: "Em rota", variant: "accent" },
+  entregue: { label: "Entregue", variant: "success" },
 };
 
 export const PAGAMENTO_STATUS_META: Record<PagamentoStatus, { label: string; variant: BadgeVariant }> = {

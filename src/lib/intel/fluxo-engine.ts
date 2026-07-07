@@ -165,18 +165,38 @@ export function calcularSubtotal(
 /** Localização recebida do WhatsApp (PIN). O webhook extrai e passa ao engine. */
 export type LocalizacaoRecebida = { latitude: number; longitude: number; endereco?: string };
 
+/** Frete calculado após o PIN (contexto.taxa_entrega_gs / distancia_km). */
+export type FreteInfo = { taxa_gs: number; distancia_km: number };
+
 /**
  * Resumo final do carrinho para o checkout (puro). Itera os itens, formata cada
  * linha e soma os subtotais. Ex.: "2x Michelob Ultra - Caixa (₲ 130.000)".
+ * Com `frete`, exibe três linhas: subtotal dos produtos, entrega e total somado.
+ * `total` retorna SEMPRE só os produtos (pedidos.valor_total_gs); o frete vive
+ * separado em pedidos.taxa_entrega_gs.
  */
-export function montarResumoCheckout(carrinho: CarrinhoItem[]): { texto: string; total: number } {
+export function montarResumoCheckout(
+  carrinho: CarrinhoItem[],
+  frete?: FreteInfo | null,
+): { texto: string; total: number } {
   const subtotalDe = (it: CarrinhoItem) => it.subtotal ?? it.preco * it.quantidade;
   const linhas = carrinho.map((it) => {
     const fmt = it.formato ? ` - ${it.formato}` : "";
     return `${it.quantidade}x ${it.nome ?? "Item"}${fmt} (${gs(subtotalDe(it))})`;
   });
   const total = carrinho.reduce((s, it) => s + subtotalDe(it), 0);
-  const texto = `*Resumo do Pedido:*\n${linhas.join("\n")}\n\n*Total a pagar: ${gs(total)}*`;
+  if (!frete) {
+    return { texto: `*Resumo do Pedido:*\n${linhas.join("\n")}\n\n*Total a pagar: ${gs(total)}*`, total };
+  }
+  const km = frete.distancia_km.toFixed(1).replace(".", ",");
+  const texto = [
+    "*Resumo do Pedido:*",
+    ...linhas,
+    "",
+    `Subtotal: ${gs(total)}`,
+    `Entrega (${km} km): ${gs(frete.taxa_gs)}`,
+    `*Total a pagar: ${gs(total + frete.taxa_gs)}*`,
+  ].join("\n");
   return { texto, total };
 }
 

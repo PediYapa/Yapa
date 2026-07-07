@@ -1,18 +1,17 @@
 import { guard } from "@/lib/auth/guard";
 import { can } from "@/lib/auth/permissions";
-import { EntregadoresClient } from "./entregadores-client";
+import { MotoboysClient } from "./motoboys-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function EntregadoresPage() {
-  const { supabase, profile } = await guard("entregadores", "read");
+export default async function MotoboysPage() {
+  const { supabase, profile } = await guard("motoboys", "read");
 
   const [{ data: rows }, { data: distribuidoras }] = await Promise.all([
     supabase
-      .from("entregadores")
+      .from("motoboys")
       .select("*")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false }),
+      .order("criado_em", { ascending: false }),
     supabase
       .from("distribuidoras")
       .select("id, nome")
@@ -22,10 +21,10 @@ export default async function EntregadoresPage() {
   ]);
 
   return (
-    <EntregadoresClient
+    <MotoboysClient
       rows={rows ?? []}
       distribuidoras={distribuidoras ?? []}
-      canWrite={can(profile, "entregadores", "write")}
+      canWrite={can(profile, "motoboys", "write")}
     />
   );
 }

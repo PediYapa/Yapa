@@ -4,20 +4,18 @@ import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Plus, Pencil, Trash2, Bike, Search } from "lucide-react";
-import type { EntregadorRow } from "@/lib/database.types";
-import { salvarEntregador, excluirEntregador } from "@/app/actions/entregadores";
+import type { MotoboyRow } from "@/lib/database.types";
+import { salvarMotoboy, excluirMotoboy } from "@/app/actions/motoboys";
 import type { ActionResult } from "@/lib/auth/guard";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { telBR } from "@/lib/format";
 
 type DistribuidoraOption = { id: string; nome: string };
 
@@ -26,20 +24,23 @@ function SubmitButton() {
   return <Button type="submit" disabled={pending}>{pending ? "Salvando…" : "Salvar"}</Button>;
 }
 
-export function EntregadoresClient({
+export function MotoboysClient({
   rows,
   distribuidoras,
   canWrite,
 }: {
-  rows: EntregadorRow[];
+  rows: MotoboyRow[];
   distribuidoras: DistribuidoraOption[];
   canWrite: boolean;
 }) {
   const router = useRouter();
   const [busca, setBusca] = useState("");
-  const [editando, setEditando] = useState<EntregadorRow | null>(null);
+  const [editando, setEditando] = useState<MotoboyRow | null>(null);
   const [aberto, setAberto] = useState(false);
-  const [state, formAction] = useActionState<ActionResult | undefined, FormData>(salvarEntregador, undefined);
+  const [erroExcluir, setErroExcluir] = useState<string | null>(null);
+  const [state, formAction] = useActionState<ActionResult | undefined, FormData>(salvarMotoboy, undefined);
+
+  const distMap = new Map(distribuidoras.map((d) => [d.id, d.nome]));
 
   useEffect(() => {
     if (state?.ok) {
@@ -49,12 +50,12 @@ export function EntregadoresClient({
     }
   }, [state, router]);
 
-  const filtradas = rows.filter((e) => {
+  const filtrados = rows.filter((m) => {
     const q = busca.toLowerCase();
     return (
-      e.nome.toLowerCase().includes(q) ||
-      (e.telefone ?? "").includes(q) ||
-      (e.grupo_parceiro ?? "").toLowerCase().includes(q)
+      m.nome.toLowerCase().includes(q) ||
+      m.telefone.includes(q) ||
+      (distMap.get(m.distribuidora_id) ?? "").toLowerCase().includes(q)
     );
   });
 
@@ -62,40 +63,44 @@ export function EntregadoresClient({
     setEditando(null);
     setAberto(true);
   }
-  function editar(e: EntregadorRow) {
-    setEditando(e);
+  function editar(m: MotoboyRow) {
+    setEditando(m);
     setAberto(true);
   }
-  async function remover(e: EntregadorRow) {
-    if (!confirm(`Excluir o entregador ${e.nome}?`)) return;
-    await excluirEntregador(e.id);
+  async function remover(m: MotoboyRow) {
+    if (!confirm(`Excluir o motoboy ${m.nome}?`)) return;
+    setErroExcluir(null);
+    const res = await excluirMotoboy(m.id);
+    if (!res.ok) setErroExcluir(res.error);
     router.refresh();
   }
 
   return (
     <div>
       <PageHeader
-        title="Entregadores"
-        description="Motoboys e parceiros que fazem as entregas."
-        action={canWrite ? <Button onClick={novo}><Plus /> Novo entregador</Button> : undefined}
+        title="Motoboys"
+        description="Quem responde 'P <corrida>' nos grupos de WhatsApp das distribuidoras."
+        action={canWrite ? <Button onClick={novo}><Plus /> Novo motoboy</Button> : undefined}
       />
 
       <div className="mb-4 relative max-w-sm">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
-          placeholder="Buscar por nome, telefone ou grupo…"
+          placeholder="Buscar por nome, telefone ou hub…"
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           className="pl-9"
         />
       </div>
 
-      {filtradas.length === 0 ? (
+      {erroExcluir && <p className="mb-4 text-sm text-destructive">{erroExcluir}</p>}
+
+      {filtrados.length === 0 ? (
         <EmptyState
           icon={<Bike />}
-          title="Nenhum entregador"
-          description="Cadastre os entregadores e parceiros que realizam as entregas do Yapa."
-          action={canWrite ? <Button onClick={novo}><Plus /> Novo entregador</Button> : undefined}
+          title="Nenhum motoboy"
+          description="Cadastre os motoboys dos grupos de WhatsApp — só cadastrados e ativos conseguem aceitar corridas."
+          action={canWrite ? <Button onClick={novo}><Plus /> Novo motoboy</Button> : undefined}
         />
       ) : (
         <div className="rounded-2xl border border-border bg-card">
@@ -103,28 +108,26 @@ export function EntregadoresClient({
             <TableHeader>
               <TableRow>
                 <TableHead>Nome</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Grupo parceiro</TableHead>
-                <TableHead className="text-right">Entregas concluídas</TableHead>
+                <TableHead>Telefone (Z-API)</TableHead>
+                <TableHead>Distribuidora / grupo</TableHead>
                 <TableHead>Ativo</TableHead>
                 <TableHead className="w-20"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtradas.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="font-medium">{e.nome}</TableCell>
-                  <TableCell>{telBR(e.telefone)}</TableCell>
-                  <TableCell>{e.grupo_parceiro ?? "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{e.entregas_completadas}</TableCell>
+              {filtrados.map((m) => (
+                <TableRow key={m.id}>
+                  <TableCell className="font-medium">{m.nome}</TableCell>
+                  <TableCell className="tabular-nums">{m.telefone}</TableCell>
+                  <TableCell>{distMap.get(m.distribuidora_id) ?? "—"}</TableCell>
                   <TableCell>
-                    <Badge variant={e.ativo ? "success" : "outline"}>{e.ativo ? "Ativo" : "Inativo"}</Badge>
+                    <Badge variant={m.ativo ? "success" : "outline"}>{m.ativo ? "Ativo" : "Inativo"}</Badge>
                   </TableCell>
                   <TableCell>
                     {canWrite && (
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => editar(e)} aria-label="Editar"><Pencil /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => remover(e)} aria-label="Excluir"><Trash2 /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => editar(m)} aria-label="Editar"><Pencil /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => remover(m)} aria-label="Excluir"><Trash2 /></Button>
                       </div>
                     )}
                   </TableCell>
@@ -138,27 +141,24 @@ export function EntregadoresClient({
       <Dialog
         open={aberto}
         onClose={() => setAberto(false)}
-        title={editando ? "Editar entregador" : "Novo entregador"}
+        title={editando ? "Editar motoboy" : "Novo motoboy"}
       >
         <form action={formAction} className="space-y-4">
           {editando && <input type="hidden" name="id" value={editando.id} />}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="nome">Nome *</Label>
-              <Input id="nome" name="nome" required defaultValue={editando?.nome ?? ""} placeholder="Nome do entregador" />
+              <Input id="nome" name="nome" required defaultValue={editando?.nome ?? ""} placeholder="Nome do motoboy" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="telefone">Telefone</Label>
-              <Input id="telefone" name="telefone" defaultValue={editando?.telefone ?? ""} placeholder="595994xxxxxx" />
+              <Label htmlFor="telefone">Telefone *</Label>
+              <Input id="telefone" name="telefone" required defaultValue={editando?.telefone ?? ""} placeholder="5959XXXXXXXX" />
+              <p className="text-xs text-muted-foreground">Mesmo número que ele usa no grupo (formato Z-API, só dígitos).</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="grupo_parceiro">Grupo parceiro</Label>
-              <Input id="grupo_parceiro" name="grupo_parceiro" defaultValue={editando?.grupo_parceiro ?? ""} placeholder="Grupo WhatsApp / central" />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="distribuidora_base_id">Distribuidora base</Label>
-              <Select id="distribuidora_base_id" name="distribuidora_base_id" defaultValue={editando?.distribuidora_base_id ?? ""}>
-                <option value="">Sem distribuidora base</option>
+              <Label htmlFor="distribuidora_id">Distribuidora *</Label>
+              <Select id="distribuidora_id" name="distribuidora_id" required defaultValue={editando?.distribuidora_id ?? ""}>
+                <option value="">Selecione…</option>
                 {distribuidoras.map((d) => (
                   <option key={d.id} value={d.id}>{d.nome}</option>
                 ))}
@@ -170,10 +170,6 @@ export function EntregadoresClient({
                 <option value="true">Sim</option>
                 <option value="false">Não</option>
               </Select>
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="notas">Notas</Label>
-              <Textarea id="notas" name="notas" defaultValue={editando?.notas ?? ""} />
             </div>
           </div>
           {state && !state.ok && <p className="text-sm text-destructive">{state.error}</p>}

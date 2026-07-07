@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { interpretarMensagem } from "@/lib/integrations/openai";
 import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } from "@/lib/integrations/zapi";
-import { executarFluxo, tipoEntidadeDoNo, montarResumoCheckout, type ProdutoInfo, type EntidadeTipo } from "@/lib/intel/fluxo-engine";
+import { executarFluxo, tipoEntidadeDoNo, montarResumoCheckout, type ProdutoInfo, type EntidadeTipo, type FreteInfo } from "@/lib/intel/fluxo-engine";
 import { montarListaEntidade, resolverSelecaoProduto, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
 import { recuperarOuCriarSessao, salvarSessao } from "@/lib/intel/sessao-whatsapp";
 import { createPaymentLink } from "@/lib/dlocal";
+import { haversineKm } from "@/lib/intel/roteamento";
+import { calcularFreteGs } from "@/lib/frete";
+import { dispararOrdemDistribuidora } from "@/lib/despacho";
+import { handleMensagemGrupoMotoboys } from "./grupo-motoboys";
 import type { ConversaMensagem, FluxoEstado, FluxoNode, CarrinhoItem } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +47,17 @@ export async function POST(request: Request) {
 
   if (body.fromMe === true) return NextResponse.json({ ok: true, ignored: "fromMe" });
 
-  const phone = String(body.phone || body.from || "").replace(/\D/g, "");
+  // ID cru do remetente — grupos têm sufixo não-numérico (ex.: "1203630...-group")
+  // que o replace(/\D/g) abaixo destruiria. Guardado antes de sanitizar.
+  const phoneRaw = String(body.phone || body.from || "").trim();
+  const participantPhone = String(body.participantPhone ?? body.participantLid ?? body.author ?? "").trim();
+  const ehGrupo =
+    body.isGroup === true ||
+    participantPhone.length > 0 ||
+    /-group$/i.test(phoneRaw) ||
+    phoneRaw.includes("@g.us");
+
+  const phone = phoneRaw.replace(/\D/g, "");
   if (!phone) return NextResponse.json({ error: "telefone ausente" }, { status: 400 });
 
   const tipoMsg = String(body.type || "").toLowerCase();
@@ -52,6 +66,8 @@ export async function POST(request: Request) {
   console.log("[yapa:webhook]", {
     type: body.type,
     phone: phone.slice(-4),
+    isGroup: body.isGroup ?? ehGrupo,
+    participant: participantPhone ? participantPhone.slice(-4) : undefined,
     keys: Object.keys(body).join(","),
     buttonsResponseMessage: body.buttonsResponseMessage != null,
     buttonResponseMessage:  body.buttonResponseMessage  != null,
@@ -145,6 +161,25 @@ export async function POST(request: Request) {
 
   const orgId = org.id;
   const agora = new Date().toISOString();
+
+  // ── GRUPO DE MOTOBOYS ────────────────────────────────────────────────────
+  // Mensagens de grupo NUNCA entram no engine de fluxo do cliente. Se o grupo
+  // está vinculado a uma distribuidora (grupo_motoboys_id), trata "P <n>"/"E <n>";
+  // qualquer outro grupo/mensagem é ignorado em silêncio.
+  if (ehGrupo) {
+    // Payload de grupo varia entre versões da Z-API — log completo ajuda a validar
+    // o formato real (participantPhone/phone/isGroup) em produção.
+    console.log("[yapa:grupo-payload]", JSON.stringify({ phone: phoneRaw, participantPhone, isGroup: body.isGroup, texto: texto.slice(0, 40) }));
+    const resultado = await handleMensagemGrupoMotoboys({
+      admin,
+      zapiCfg,
+      orgId,
+      grupoPhone: phoneRaw,
+      participantPhone,
+      texto,
+    });
+    return NextResponse.json({ ok: true, grupo: resultado.acao });
+  }
 
   // .limit(1) é OBRIGATÓRIO: sem ele, .maybeSingle() ERRA quando há 2+ conversas
   // não-arquivadas do mesmo telefone → retorna null → o webhook cria uma conversa
@@ -286,6 +321,36 @@ export async function POST(request: Request) {
         return (data as string | null) ?? null;
       };
 
+      // Frete: distância cliente↔distribuidora (Haversine) → faixa de km em GS.
+      // Retorna null se fora das faixas (> 8 km) — o geo-routing já barra antes,
+      // mas validamos de novo (raio_km da distribuidora pode ser maior que a tabela).
+      const calcularFreteDaEntrega = async (
+        distId: string,
+        lat: number,
+        lng: number,
+      ): Promise<FreteInfo | null> => {
+        const { data: distGeo } = await admin
+          .from("distribuidoras").select("latitude, longitude").eq("id", distId).maybeSingle();
+        const dKm = haversineKm(
+          { latitude: lat, longitude: lng },
+          {
+            latitude: distGeo?.latitude != null ? Number(distGeo.latitude) : null,
+            longitude: distGeo?.longitude != null ? Number(distGeo.longitude) : null,
+          },
+        );
+        if (dKm == null) return null;
+        const taxa = calcularFreteGs(dKm);
+        if (taxa == null) return null;
+        return { taxa_gs: taxa, distancia_km: Math.round(dKm * 100) / 100 };
+      };
+
+      // Frete já calculado no PIN (persistido no contexto até virar pedido).
+      const freteDoContexto = (): FreteInfo | null => {
+        const taxa = typeof contexto.taxa_entrega_gs === "number" ? contexto.taxa_entrega_gs : null;
+        const dist = typeof contexto.distancia_km === "number" ? contexto.distancia_km : null;
+        return taxa != null && dist != null ? { taxa_gs: taxa, distancia_km: dist } : null;
+      };
+
       // Etapa virtual de sabor: ≤3 botões, 4–12 enquete (a resposta é lida pelo label).
       const enviarOpcoesVariacao = async (titulo: string, opcoes: string[]): Promise<void> => {
         if (opcoes.length <= 3) {
@@ -345,6 +410,7 @@ export async function POST(request: Request) {
         forma: "dinheiro" | "pix" | null,
       ): Promise<{ pedidoId: string; numero: number; total: number } | null> => {
         const { total } = montarResumoCheckout(carrinho);
+        const frete = freteDoContexto();
         const distId = typeof contexto.distribuidora_id === "string" ? contexto.distribuidora_id : null;
         const lat = typeof contexto.latitude === "number" ? contexto.latitude : null;
         const lng = typeof contexto.longitude === "number" ? contexto.longitude : null;
@@ -378,6 +444,8 @@ export async function POST(request: Request) {
             .insert({
               org_id: orgId, cliente_id: clienteId, distribuidora_id: distId, status: "aguardando_pagamento",
               canal: "whatsapp", moeda: "GS", forma_pagamento: forma, valor_total_gs: total,
+              // Frete separado do valor dos produtos (fluxos financeiros distintos).
+              taxa_entrega_gs: frete?.taxa_gs ?? null, distancia_km: frete?.distancia_km ?? null,
               latitude: lat, longitude: lng, endereco_entrega: endereco,
               precisa_fatura: precisaFatura, documento_ruc: ruc,
               observacao: [nomeCliente ? `Cliente: ${nomeCliente}` : null, metodoLabel ? `Pagamento: ${metodoLabel}` : null, ruc ? `RUC/CI: ${ruc}` : null].filter(Boolean).join(" | ") || null,
@@ -414,13 +482,20 @@ export async function POST(request: Request) {
       const finalizarSeEncerrou = async (resultado: { no_atual: string | null }): Promise<void> => {
         if (resultado.no_atual !== null) return;
         if (carrinho.length === 0) { contexto = {}; return; }
-        const { texto: resumo } = montarResumoCheckout(carrinho);
+        const { texto: resumo } = montarResumoCheckout(carrinho, freteDoContexto());
         const metodoLabel = typeof contexto.metodo_pagamento === "string" ? contexto.metodo_pagamento : null;
-        const novo = await criarPedidoDoCarrinho(mapearFormaPagamento(metodoLabel));
+        const forma = mapearFormaPagamento(metodoLabel);
+        const novo = await criarPedidoDoCarrinho(forma);
         const rodape = novo ? `\n\n_Pedido #${novo.numero} registrado._` : "";
         await enviarTexto(phone, resumo + rodape, zapiCfg);
         novasMensagens.push({ de: "bot", texto: resumo + rodape, tipo: "texto", em: agora });
         await notaDistribuidora();
+        // Dinheiro na entrega = pedido confirmado sem gateway → duplo disparo
+        // (distribuidora + grupo de motoboys) direto no encerramento.
+        if (novo && forma === "dinheiro") {
+          const despacho = await dispararOrdemDistribuidora(novo.pedidoId);
+          if (!despacho.ok) console.error("[yapa:despacho] disparo (dinheiro/encerramento) falhou:", despacho.error);
+        }
         carrinho.length = 0;
         contexto = {};
       };
@@ -429,7 +504,8 @@ export async function POST(request: Request) {
       // Pedido criado uma única vez (idempotente via contexto.pedido_pendente_id),
       // permitindo retentativa do link sem duplicar o pedido.
       const processarPagamento = async (ehOnline: boolean): Promise<{ avancar: boolean }> => {
-        const { texto: resumo, total } = montarResumoCheckout(carrinho);
+        const frete = freteDoContexto();
+        const { texto: resumo, total } = montarResumoCheckout(carrinho, frete);
         let pedidoId = typeof contexto.pedido_pendente_id === "string" ? contexto.pedido_pendente_id : null;
         let numero = typeof contexto.pedido_numero === "number" ? contexto.pedido_numero : null;
         let totalPedido = total;
@@ -448,7 +524,9 @@ export async function POST(request: Request) {
         }
 
         if (ehOnline) {
-          const link = await createPaymentLink({ pedidoId, amount: Math.round(totalPedido), description: `Yapa pedido #${numero}`, appUrl: url.origin });
+          // Cliente paga produtos + frete online (total exibido no resumo).
+          const amount = Math.round(totalPedido + (frete?.taxa_gs ?? 0));
+          const link = await createPaymentLink({ pedidoId, amount, description: `Yapa pedido #${numero}`, appUrl: url.origin });
           if (link.ok) {
             await admin.from("pedidos").update({ forma_pagamento: "dlocal", gateway_id: link.paymentId, gateway_status: link.status }).eq("id", pedidoId);
             const msg = `Acesse o link seguro abaixo para concluir seu pagamento via QR Code, Transferência ou Cartão:\n${link.redirectUrl}`;
@@ -467,6 +545,12 @@ export async function POST(request: Request) {
         const msg = "Perfeito! Você paga em dinheiro na entrega. 💵";
         await enviarTexto(phone, msg, zapiCfg);
         novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+
+        // Dinheiro na entrega = pedido CONFIRMADO: duplo disparo imediato
+        // (comanda → distribuidora + corrida → grupo de motoboys, em paralelo).
+        const despacho = await dispararOrdemDistribuidora(pedidoId);
+        if (!despacho.ok) console.error("[yapa:despacho] disparo (dinheiro) falhou:", despacho.error);
+
         return { avancar: true };
       };
 
@@ -501,7 +585,12 @@ export async function POST(request: Request) {
       } else if (noEspera?.data.tipo === "location_capture" && localizacao && estado) {
         // GEO-ROUTING: casa a distribuidora antes de avançar para o checkout.
         const distId = await matchDistribuidora(localizacao.latitude, localizacao.longitude);
-        if (!distId) {
+        // FRETE: com distribuidora atribuída, calcula distância + faixa de km.
+        // Sem faixa (> 8 km ou sem coords) trata como fora de cobertura.
+        const frete = distId
+          ? await calcularFreteDaEntrega(distId, localizacao.latitude, localizacao.longitude)
+          : null;
+        if (!distId || !frete) {
           // Geofence antecipado: fora de cobertura → aborta educadamente e RESETA a sessão
           // (limpa estado + carrinho). O cliente recomeça quando quiser mandando "oi".
           const msg = "Infelizmente ainda não atendemos esse endereço. 😕\n\nSeu pedido não pôde ser concluído. Quando estiver em uma área coberta, é só mandar *oi* para recomeçar. Obrigado pela compreensão! 🙏";
@@ -512,7 +601,12 @@ export async function POST(request: Request) {
           novoNoAtual = null; // reseta a sessão: próximo "oi" começa do zero
           respondeuPorFluxo = true;
         } else {
-          contexto = { ...contexto, distribuidora_id: distId };
+          contexto = {
+            ...contexto,
+            distribuidora_id: distId,
+            distancia_km: frete.distancia_km,
+            taxa_entrega_gs: frete.taxa_gs,
+          };
           const resultado = await rodarEngine({ ...estado, contexto }, texto, localizacao);
           await finalizarSeEncerrou(resultado);
         }

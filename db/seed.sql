@@ -32,10 +32,10 @@ insert into yapa.produtos (id, org_id, nome, categoria, preco_gs, disponivel) va
  ('00000000-0000-0000-0000-0000000000c6','00000000-0000-0000-0000-0000000000a1','Fernet 750ml','destilado', 75000, true)
 on conflict (id) do nothing;
 
--- Entregadores
-insert into yapa.entregadores (id, org_id, nome, telefone, grupo_parceiro, distribuidora_base_id, ativo, entregas_completadas) values
- ('00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-0000000000a1','Grupo Motoboys Centro','595994777888','Grupo WhatsApp Centro','00000000-0000-0000-0000-0000000000d1', true, 42),
- ('00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000a1','Diego (Km 4)','595994999000','Grupo WhatsApp Km4','00000000-0000-0000-0000-0000000000d2', true, 17)
+-- Motoboys (frota consolidada; telefone UNIQUE = amarração do webhook Z-API)
+insert into yapa.motoboys (id, org_id, distribuidora_id, nome, telefone, ativo, entregas_completadas) values
+ ('00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000000d1','Rodrigo (Centro)','595994777888', true, 42),
+ ('00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000000d2','Diego (Km 4)','595994999000', true, 17)
 on conflict (id) do nothing;
 
 -- Clientes (coordenadas dentro do raio de alguma distribuidora)
@@ -63,7 +63,7 @@ insert into yapa.pedido_itens (org_id, pedido_id, produto_id, descricao, quantid
  ('00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000f0005','00000000-0000-0000-0000-0000000000c1','Heineken 600ml', 1, 18000, 18000);
 
 -- Entregas
-insert into yapa.entregas (org_id, pedido_id, entregador_id, status, horario_despacho, horario_entrega_realizado) values
+insert into yapa.entregas (org_id, pedido_id, motoboy_id, status, horario_despacho, horario_entrega_realizado) values
  ('00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000f0001','00000000-0000-0000-0000-0000000000e1','entregue', now() - interval '110 minute', now() - interval '75 minute'),
  ('00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000f0002','00000000-0000-0000-0000-0000000000e2','em_entrega', now() - interval '30 minute', null);
 

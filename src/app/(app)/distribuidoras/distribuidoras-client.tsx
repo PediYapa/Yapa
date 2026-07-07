@@ -171,6 +171,13 @@ export function DistribuidorasClient({ rows, canWrite }: { rows: DistribuidoraRo
               <Label htmlFor="link_maps">Link do Maps</Label>
               <Input id="link_maps" name="link_maps" defaultValue={editando?.link_maps ?? ""} placeholder="https://maps.google.com/…" />
             </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="grupo_motoboys_id">Grupo de motoboys (ID Z-API)</Label>
+              <Input id="grupo_motoboys_id" name="grupo_motoboys_id" defaultValue={editando?.grupo_motoboys_id ?? ""} placeholder="Ex.: 120363043123456789-group" />
+              <p className="text-xs text-muted-foreground">
+                ID do grupo de WhatsApp que recebe as corridas. Para obter: painel Z-API → Grupos, ou mande uma mensagem no grupo e copie o campo <code>phone</code> do log do webhook.
+              </p>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="recebe_dinheiro">Recebe dinheiro</Label>
               <Select id="recebe_dinheiro" name="recebe_dinheiro" defaultValue={String(editando?.recebe_dinheiro ?? true)}>

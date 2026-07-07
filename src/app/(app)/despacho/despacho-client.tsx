@@ -3,12 +3,12 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
-import type { EntregaStatus, EntregadorRow } from "@/lib/database.types";
-import { atribuirEntregador, mudarStatusEntrega } from "@/app/actions/despacho";
+import type { EntregaStatus, MotoboyRow } from "@/lib/database.types";
+import { atribuirMotoboy, mudarStatusEntrega } from "@/app/actions/despacho";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 
-type EntregadorMini = Pick<EntregadorRow, "id" | "nome" | "telefone" | "ativo">;
+type MotoboyMini = Pick<MotoboyRow, "id" | "nome" | "telefone" | "ativo">;
 
 /** Próximo passo do fluxo feliz a partir do status atual. */
 const PROXIMO: Partial<Record<EntregaStatus, { alvo: EntregaStatus; label: string }>> = {
@@ -22,13 +22,13 @@ const FINAIS: EntregaStatus[] = ["entregue", "cancelada"];
 export function DespachoClient({
   entregaId,
   status,
-  entregadorId,
-  entregadores,
+  motoboyId,
+  motoboys,
 }: {
   entregaId: string;
   status: EntregaStatus;
-  entregadorId: string | null;
-  entregadores: EntregadorMini[];
+  motoboyId: string | null;
+  motoboys: MotoboyMini[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -37,7 +37,7 @@ export function DespachoClient({
   function atribuir(novoId: string) {
     setErro(null);
     startTransition(async () => {
-      const res = await atribuirEntregador(entregaId, novoId || null);
+      const res = await atribuirMotoboy(entregaId, novoId || null);
       if (!res.ok) return setErro(res.error);
       router.refresh();
     });
@@ -60,16 +60,16 @@ export function DespachoClient({
       <div className="flex flex-wrap items-center gap-2">
         <Select
           className="h-9 w-44 text-xs"
-          value={entregadorId ?? ""}
+          value={motoboyId ?? ""}
           disabled={pending || encerrada}
           onChange={(e) => atribuir(e.target.value)}
-          aria-label="Atribuir entregador"
+          aria-label="Atribuir motoboy"
         >
-          <option value="">Sem entregador</option>
-          {entregadores.map((ent) => (
-            <option key={ent.id} value={ent.id} disabled={!ent.ativo}>
-              {ent.nome}
-              {ent.ativo ? "" : " (inativo)"}
+          <option value="">Sem motoboy</option>
+          {motoboys.map((m) => (
+            <option key={m.id} value={m.id} disabled={!m.ativo}>
+              {m.nome}
+              {m.ativo ? "" : " (inativo)"}
             </option>
           ))}
         </Select>

@@ -18,6 +18,7 @@ import {
   PEDIDO_STATUS_META,
   ENTREGA_STATUS_META,
   PAGAMENTO_STATUS_META,
+  STATUS_ENTREGA_MOTOBOY_META,
 } from "@/lib/intel/status";
 import { PedidoAcoes } from "./pedido-acoes";
 
@@ -55,6 +56,9 @@ export default async function PedidoDetalhePage({
 
   const cliente = pedido.cliente_id
     ? (await supabase.from("clientes").select("*").eq("id", pedido.cliente_id).maybeSingle()).data
+    : null;
+  const motoboy = pedido.motoboy_id
+    ? (await supabase.from("motoboys").select("nome, telefone").eq("id", pedido.motoboy_id).maybeSingle()).data
     : null;
   const distribuidora = pedido.distribuidora_id
     ? distribuidoras.find((d) => d.id === pedido.distribuidora_id) ?? null
@@ -189,6 +193,28 @@ export default async function PedidoDetalhePage({
                 <span className="text-muted-foreground">Distribuidora</span>
                 <span>{distribuidora?.nome ?? "—"}</span>
               </div>
+              {pedido.status_entrega && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Corrida #{pedido.numero_corrida}</span>
+                  <Badge variant={STATUS_ENTREGA_MOTOBOY_META[pedido.status_entrega].variant}>
+                    {STATUS_ENTREGA_MOTOBOY_META[pedido.status_entrega].label}
+                  </Badge>
+                </div>
+              )}
+              {motoboy && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Motoboy</span>
+                  <span>{motoboy.nome}</span>
+                </div>
+              )}
+              {pedido.taxa_entrega_gs != null && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">
+                    Frete{pedido.distancia_km != null ? ` (${Number(pedido.distancia_km).toFixed(1).replace(".", ",")} km)` : ""}
+                  </span>
+                  <span className="tabular-nums">{gs(pedido.taxa_entrega_gs)}</span>
+                </div>
+              )}
               {entrega ? (
                 <>
                   <div className="flex items-center justify-between">

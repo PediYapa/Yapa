@@ -18,7 +18,7 @@ const fraunces = Fraunces({
 
 export const metadata: Metadata = {
   title: "Yapa — Gestão do Delivery",
-  description: "Central de gestão do Yapa: pedidos, entregas, entregadores, distribuidoras, clientes e financeiro do delivery de bebidas em Ciudad del Este.",
+  description: "Central de gestão do Yapa: pedidos, entregas, motoboys, distribuidoras, clientes e financeiro do delivery de bebidas em Ciudad del Este.",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

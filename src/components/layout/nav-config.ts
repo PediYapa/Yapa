@@ -27,7 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { module: "atendimento", label: "Atendimento", href: "/atendimento", icon: MessagesSquare },
   { module: "clientes", label: "Clientes", href: "/clientes", icon: Users },
   { module: "distribuidoras", label: "Distribuidoras", href: "/distribuidoras", icon: Store },
-  { module: "entregadores", label: "Entregadores", href: "/entregadores", icon: Bike },
+  { module: "motoboys", label: "Motoboys", href: "/motoboys", icon: Bike },
   { module: "produtos", label: "Catálogo", href: "/produtos", icon: Beer },
   { module: "fluxos", label: "Fluxos", href: "/fluxos", icon: Workflow },
   { module: "financeiro", label: "Financeiro", href: "/financeiro", icon: Wallet },

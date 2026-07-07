@@ -17,6 +17,8 @@ export type PedidoStatus =
 export type Moeda = "GS" | "PIX" | "BRL";
 export type FormaPagamento = "dlocal" | "pix" | "dinheiro";
 export type EntregaStatus = "aguardando" | "coletado" | "em_entrega" | "entregue" | "cancelada";
+/** Status da entrega por motoboy (pedidos.status_entrega — dispatch via grupo de WhatsApp). */
+export type StatusEntregaMotoboy = "aguardando_motoboy" | "atribuido" | "em_rota" | "entregue";
 export type PagamentoStatus = "pendente" | "pago" | "estornado" | "falha";
 export type ConversaStatus = "aberta" | "pendente" | "resolvida" | "arquivada";
 export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano" | "payment_dlocal" | "external_link" | "location_capture" | "captura";
@@ -81,6 +83,7 @@ export type DistribuidoraRow = {
   saldo_d1_gs: number;
   ativo: boolean;
   tipo: string | null;
+  grupo_motoboys_id: string | null;
   notas: string | null;
   created_at: string;
   updated_at: string;
@@ -117,21 +120,6 @@ export type ProdutoRow = {
   deleted_at: string | null;
 };
 
-export type EntregadorRow = {
-  id: string;
-  org_id: string;
-  nome: string;
-  telefone: string | null;
-  grupo_parceiro: string | null;
-  distribuidora_base_id: string | null;
-  ativo: boolean;
-  entregas_completadas: number;
-  notas: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-};
-
 export type PedidoRow = {
   id: string;
   org_id: string;
@@ -147,6 +135,11 @@ export type PedidoRow = {
   precisa_fatura: boolean;
   documento_ruc: string | null;
   valor_total_gs: number;
+  taxa_entrega_gs: number | null;
+  distancia_km: number | null;
+  motoboy_id: string | null;
+  status_entrega: StatusEntregaMotoboy | null;
+  numero_corrida: number;
   valor_origem: number | null;
   codigo_validacao: string | null;
   endereco_entrega: string | null;
@@ -157,6 +150,18 @@ export type PedidoRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+};
+
+/** Motoboy vinculado a um grupo de WhatsApp de distribuidora (sem login no app). */
+export type MotoboyRow = {
+  id: string;
+  org_id: string;
+  distribuidora_id: string;
+  nome: string;
+  telefone: string;
+  ativo: boolean;
+  entregas_completadas: number;
+  criado_em: string;
 };
 
 export type PedidoItemRow = {
@@ -175,7 +180,7 @@ export type EntregaRow = {
   id: string;
   org_id: string;
   pedido_id: string;
-  entregador_id: string | null;
+  motoboy_id: string | null;
   status: EntregaStatus;
   horario_despacho: string | null;
   horario_coleta: string | null;
@@ -357,7 +362,7 @@ export type Database = {
       clientes: TableShape<ClienteRow>;
       distribuidoras: TableShape<DistribuidoraRow>;
       produtos: TableShape<ProdutoRow>;
-      entregadores: TableShape<EntregadorRow>;
+      motoboys: TableShape<MotoboyRow>;
       pedidos: TableShape<PedidoRow>;
       pedido_itens: TableShape<PedidoItemRow>;
       entregas: TableShape<EntregaRow>;

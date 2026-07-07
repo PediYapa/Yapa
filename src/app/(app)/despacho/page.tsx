@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Bike, Hourglass, PackageCheck } from "lucide-react";
 import { guard } from "@/lib/auth/guard";
 import { can } from "@/lib/auth/permissions";
-import type { PedidoRow, EntregadorRow, EntregaStatus } from "@/lib/database.types";
+import type { PedidoRow, MotoboyRow, EntregaStatus } from "@/lib/database.types";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Badge } from "@/components/ui/badge";
@@ -49,14 +49,13 @@ export default async function DespachoPage({
     : { data: [] as Pick<PedidoRow, "id" | "numero" | "endereco_entrega" | "codigo_validacao" | "cliente_id">[] };
   const pedidosMap = new Map((pedidosData ?? []).map((p) => [p.id, p]));
 
-  // Entregadores ativos para atribuição.
-  const { data: entregadoresData } = await supabase
-    .from("entregadores")
+  // Motoboys para atribuição manual (fallback quando ninguém aceita no grupo).
+  const { data: motoboysData } = await supabase
+    .from("motoboys")
     .select("id, nome, telefone, ativo")
-    .is("deleted_at", null)
     .order("nome", { ascending: true });
-  const entregadores = (entregadoresData ?? []) as Pick<EntregadorRow, "id" | "nome" | "telefone" | "ativo">[];
-  const entregadoresMap = new Map(entregadores.map((e) => [e.id, e]));
+  const motoboys = (motoboysData ?? []) as Pick<MotoboyRow, "id" | "nome" | "telefone" | "ativo">[];
+  const motoboysMap = new Map(motoboys.map((m) => [m.id, m]));
 
   // KPIs
   const hojeISO = new Date().toISOString().slice(0, 10);
@@ -76,7 +75,7 @@ export default async function DespachoPage({
     <div>
       <PageHeader
         title="Despacho"
-        description="Atribua entregadores e acompanhe cada entrega até a porta do cliente."
+        description="Fallback manual: atribua motoboys e acompanhe cada entrega até a porta do cliente."
       />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
@@ -115,7 +114,7 @@ export default async function DespachoPage({
               <TableRow>
                 <TableHead>Pedido</TableHead>
                 <TableHead>Endereço</TableHead>
-                <TableHead>Entregador</TableHead>
+                <TableHead>Motoboy</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Despachado</TableHead>
                 {canWrite && <TableHead className="w-[320px]">Ações</TableHead>}
@@ -125,7 +124,7 @@ export default async function DespachoPage({
               {lista.map((e) => {
                 const meta = ENTREGA_STATUS_META[e.status];
                 const pedido = pedidosMap.get(e.pedido_id);
-                const entregador = e.entregador_id ? entregadoresMap.get(e.entregador_id) : undefined;
+                const motoboy = e.motoboy_id ? motoboysMap.get(e.motoboy_id) : undefined;
                 return (
                   <TableRow key={e.id}>
                     <TableCell className="font-medium">
@@ -134,7 +133,7 @@ export default async function DespachoPage({
                     <TableCell className="max-w-[220px] truncate">
                       {pedido?.endereco_entrega ?? "—"}
                     </TableCell>
-                    <TableCell>{entregador?.nome ?? "—"}</TableCell>
+                    <TableCell>{motoboy?.nome ?? "—"}</TableCell>
                     <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
                     <TableCell>{dataHoraBR(e.horario_despacho ?? e.created_at)}</TableCell>
                     {canWrite && (
@@ -142,8 +141,8 @@ export default async function DespachoPage({
                         <DespachoClient
                           entregaId={e.id}
                           status={e.status}
-                          entregadorId={e.entregador_id}
-                          entregadores={entregadores}
+                          motoboyId={e.motoboy_id}
+                          motoboys={motoboys}
                         />
                       </TableCell>
                     )}

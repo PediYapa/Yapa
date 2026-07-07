@@ -12,15 +12,16 @@ const STATUS_VALIDOS: EntregaStatus[] = [
   "cancelada",
 ];
 
-export async function atribuirEntregador(
+/** Atribui/desatribui um motoboy a uma entrega (fallback manual do painel). */
+export async function atribuirMotoboy(
   entregaId: string,
-  entregadorId: string | null,
+  motoboyId: string | null,
 ): Promise<ActionResult> {
   return runAction(async () => {
     const { supabase } = await guard("despacho", "write");
     const { error } = await supabase
       .from("entregas")
-      .update({ entregador_id: entregadorId || null })
+      .update({ motoboy_id: motoboyId || null })
       .eq("id", entregaId);
     if (error) return { ok: false, error: error.message };
     revalidatePath("/despacho");
@@ -60,18 +61,18 @@ export async function mudarStatusEntrega(
     if (errUpdate) return { ok: false, error: errUpdate.message };
 
     if (novo === "entregue") {
-      // Incrementa o contador de entregas do entregador.
-      if (entrega.entregador_id) {
-        const { data: entregador } = await supabase
-          .from("entregadores")
+      // Incrementa o contador de entregas do motoboy.
+      if (entrega.motoboy_id) {
+        const { data: motoboy } = await supabase
+          .from("motoboys")
           .select("entregas_completadas")
-          .eq("id", entrega.entregador_id)
+          .eq("id", entrega.motoboy_id)
           .single();
-        const atual = entregador?.entregas_completadas ?? 0;
+        const atual = motoboy?.entregas_completadas ?? 0;
         await supabase
-          .from("entregadores")
+          .from("motoboys")
           .update({ entregas_completadas: atual + 1 })
-          .eq("id", entrega.entregador_id);
+          .eq("id", entrega.motoboy_id);
       }
       // Marca o pedido como entregue.
       await supabase

@@ -119,3 +119,12 @@ export function enviarLinkPagamento(phone: string, url: string, valorFmt: string
 export function notificarDistribuidora(phone: string, resumo: string, cfg?: ZapiConfig | null) {
   return enviarTexto(phone, `🆕 Novo pedido Yapa\n\n${resumo}`, cfg);
 }
+
+/**
+ * Envia texto para um GRUPO de WhatsApp (send-text aceita o ID do grupo no
+ * campo phone). NÃO sanitiza: IDs de grupo da Z-API têm sufixos não-numéricos
+ * (ex.: "1203630...-group") que seriam destruídos pelo replace(/\D/g, "").
+ */
+export function notificarGrupoMotoboys(grupoId: string, mensagem: string, cfg?: ZapiConfig | null) {
+  return post("send-text", { phone: grupoId.trim(), message: mensagem }, cfg);
+}

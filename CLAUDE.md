@@ -296,6 +296,24 @@ WHERE id = '<auth_user_id>';
 
 ---
 
+## 11B. Dispatch de Motoboys (grupos de WhatsApp)
+
+### Conceito
+Cada distribuidora tem um grupo de motoboys na Z-API (`distribuidoras.grupo_motoboys_id`). Na confirmação do pedido (pago online OU dinheiro), `lib/despacho.ts` dispara **em paralelo** (Promise.allSettled) a comanda para a distribuidora e o anúncio da corrida para o grupo. O 1º motoboy que responder `P <numero_corrida>` reivindica; `E <numero_corrida>` confirma a entrega.
+
+### Regras críticas
+- **Claim atômico:** um único UPDATE condicional (`motoboy_id IS NULL AND status_entrega='aguardando_motoboy'` + RETURNING) — nunca SELECT antes. Testado: 2 claims simultâneos → exatamente 1 vence.
+- **Privacidade:** nome/telefone/PIN do cliente só no DM do vencedor — NUNCA no grupo.
+- **Grupos nunca entram no engine do cliente:** branch no início do webhook (`isGroup`/`participantPhone`/sufixo `-group`/`@g.us`) → `grupo-motoboys.ts`. Mensagens que não são `P <n>`/`E <n>` são ignoradas em silêncio.
+- **ID de grupo não sanitiza:** `notificarGrupoMotoboys` envia o ID cru (sufixos não-numéricos); `replace(/\D/g)` destruiria.
+- **Frete separado:** `taxa_entrega_gs`/`distancia_km` fora de `valor_total_gs`. Faixas em `lib/frete.ts` (até 2 km 10k · 2–5 15k · 5–8 20k · >8 = fora de cobertura). Calculado logo após o PIN + match_distribuidora.
+- **Textos:** todos em `src/lib/mensagens-motoboys.ts` (ajustar copy sem tocar em lógica).
+- **status_entrega:** `aguardando_motoboy → atribuido → em_rota → entregue`; `NULL` = pedido fora do dispatch (histórico pré-feature).
+- Motoboys não têm login — CRUD no painel `/motoboys` (módulo `motoboys`); telefone é UNIQUE no formato Z-API (só dígitos).
+
+### Frota consolidada (migration 014)
+A tabela legada `entregadores` (Fase 1) foi **removida** — `motoboys` é a única fonte da verdade da frota. `entregas`, `rotas` e `gps_pings` agora referenciam `motoboys` via `motoboy_id`. O painel `/despacho` continua existindo como **fallback manual** (atribuir motoboy + avançar status de `entregas`) para quando ninguém aceita a corrida no grupo; a via principal é o leilão via WhatsApp. Não recriar `entregadores`.
+
 ## 12. Categorias de produto
 
 | Valor no banco | Label na UI | Campos extras |
@@ -398,3 +416,5 @@ Após DDL: `mcp__claude_ai_Supabase__get_advisors` (security + performance).
 | 010 | `010_faturacao_e_gateway.sql` | `precisa_fatura`, `documento_ruc` em pedidos; `documento_ruc` em clientes; restaura `gateway_id`/`gateway_status` |
 | 011 | `011_yapa_partners_estoque_hub.sql` | Tabela `estoque_hub`, role `hub`, `distribuidora_id` em user_profiles, `tipo` em distribuidoras, RLS hub |
 | 012 | `012_rls_estoque_hub_admin_read.sql` | RLS estoque_hub: owners/gerentes leem qualquer hub da org |
+| 013 | `013_dispatch_motoboys.sql` | Dispatch de motoboys: tabela `motoboys`, `grupo_motoboys_id` em distribuidoras, frete/corrida em pedidos |
+| 014 | `014_consolidar_frota_motoboys.sql` | Aposenta `entregadores` (legado Fase 1); `entregas`/`rotas`/`gps_pings` repointam `entregador_id`→`motoboy_id`; contador migra p/ `motoboys` |
