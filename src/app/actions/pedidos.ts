@@ -6,6 +6,8 @@ import { guard, runAction, type ActionResult } from "@/lib/auth/guard";
 import type { PedidoStatus, Moeda, FormaPagamento } from "@/lib/database.types";
 import { PEDIDO_TRANSICOES, gerarCodigoValidacao } from "@/lib/intel/status";
 import { escolherDistribuidora, type DistribuidoraGeo } from "@/lib/intel/roteamento";
+import { enviarTexto, type ZapiConfig } from "@/lib/integrations/zapi";
+import { msgCodigoEntregaCliente } from "@/lib/mensagens-motoboys";
 
 const itemSchema = z.object({
   descricao: z.string().trim().min(1).max(200),
@@ -320,15 +322,45 @@ export async function registrarPagamento(
   });
 }
 
-/** Gera/regenera o código de validação de entrega (4 dígitos). */
+/**
+ * Gera/regenera o código de validação de entrega (4 dígitos) e reenvia ao
+ * cliente por WhatsApp — uso típico: cliente perdeu a mensagem original que o
+ * bot manda automaticamente no despacho (ver lib/despacho.ts).
+ */
 export async function gerarCodigo(pedidoId: string): Promise<ActionResult> {
   return runAction(async () => {
     const { supabase } = await guard("pedidos", "write");
+
+    const { data: pedido, error: errPedido } = await supabase
+      .from("pedidos")
+      .select("id, numero, org_id, cliente_id")
+      .eq("id", pedidoId)
+      .single();
+    if (errPedido || !pedido) return { ok: false, error: "Pedido não encontrado." };
+
+    const codigo = gerarCodigoValidacao();
     const { error } = await supabase
       .from("pedidos")
-      .update({ codigo_validacao: gerarCodigoValidacao() })
+      .update({ codigo_validacao: codigo })
       .eq("id", pedidoId);
     if (error) return { ok: false, error: error.message };
+
+    // Reenvio best-effort: código já foi salvo mesmo se o WhatsApp falhar.
+    if (pedido.cliente_id) {
+      const [{ data: cliente }, { data: org }] = await Promise.all([
+        supabase.from("clientes").select("telefone").eq("id", pedido.cliente_id).maybeSingle(),
+        supabase.from("orgs").select("zapi_instance, zapi_token, zapi_client_token").eq("id", pedido.org_id).single(),
+      ]);
+      if (cliente?.telefone) {
+        const zapiCfg: ZapiConfig | null =
+          org?.zapi_instance && org?.zapi_token
+            ? { instance: org.zapi_instance, token: org.zapi_token, clientToken: org.zapi_client_token }
+            : null;
+        try {
+          await enviarTexto(cliente.telefone, msgCodigoEntregaCliente(pedido.numero, codigo), zapiCfg);
+        } catch { /* não-bloqueante — código já está salvo */ }
+      }
+    }
 
     revalidatePath(`/pedidos/${pedidoId}`);
     return { ok: true, id: pedidoId };

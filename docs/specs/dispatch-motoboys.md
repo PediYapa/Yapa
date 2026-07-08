@@ -28,8 +28,14 @@ Motoboy (via grupo de WhatsApp, sem login) + admin Yapa (cadastro e acompanhamen
 3. `P <n>` → lookup motoboy por `participantPhone` (ativo + distribuidora do grupo) → UPDATE condicional único (`motoboy_id IS NULL AND status_entrega = 'aguardando_motoboy'` + RETURNING)
 4. Ganhou → grupo: "✅ Corrida #N é do Fulano" + DM com dados completos (endereço, cliente, telefone, PIN maps, valor a cobrar se dinheiro)
 5. Perdeu → DM discreto ("já foi aceita"); número inexistente → silêncio
-6. `E <n>` → só o motoboy atribuído: `status_entrega/status = 'entregue'` + notifica o cliente
+6. `E <n> <código>` → só o motoboy atribuído E com o código correto: `status_entrega/status = 'entregue'` + notifica o cliente. Código incorreto → DM pedindo para confirmar de novo (só se a corrida é dele). `E <n>` sem código → DM lembrando do código (só se a corrida é dele; senão silêncio).
 7. Qualquer outra mensagem do grupo → ignorada em silêncio
+
+### Código de confirmação de entrega (prova de que o motoboy chegou)
+- Reusa `pedidos.codigo_validacao` (4 dígitos, já existia no schema para outro uso manual).
+- Gerado (se ainda não existir) e enviado ao **cliente** por WhatsApp em `dispararOrdemDistribuidora` — sempre, independente da forma de pagamento.
+- O motoboy nunca recebe o código pelo sistema — só o cliente sabe; o motoboy pede na porta. É isso que torna o `E` uma prova de entrega, não só a palavra do motoboy.
+- Painel: botão "Regenerar código" em `/pedidos/[id]` agora também reenvia por WhatsApp (útil se o cliente perdeu a mensagem).
 
 ## Banco de dados (migration 013)
 - `distribuidoras.grupo_motoboys_id` (text — phone/ID do grupo na Z-API)
@@ -55,8 +61,10 @@ Motoboy (via grupo de WhatsApp, sem login) + admin Yapa (cadastro e acompanhamen
 - [x] Claim atômico validado em SQL (2º claim = 0 linhas; E de outro motoboy bloqueado)
 - [x] Vencedor DM completo / perdedor DM discreto / grupo só o anúncio
 - [x] Mensagens ≠ P/E ignoradas em silêncio
-- [x] `E <n>` marca entregue + notifica cliente
+- [x] `E <n> <código>` marca entregue + notifica cliente
 - [x] Motoboy não cadastrado/inativo não reivindica
+- [x] Código de entrega: cliente recebe automaticamente no despacho; motoboy nunca recebe pelo sistema
+- [x] Código errado ou ausente → motoboy é avisado (DM) para tentar de novo; não confirma a entrega
 - [x] `npm run typecheck` limpo
 
 ## Fora do escopo

@@ -67,7 +67,8 @@ export function msgDmVencedor(input: {
       ? `💵 *Cobrar na entrega: ${gs(input.cobrarGs)}* (produtos + frete)`
       : "✅ Pedido pago online — nada a cobrar do cliente.",
     "",
-    `Ao entregar, responda *E ${input.numeroCorrida}* no grupo para confirmar.`,
+    `🔐 Ao entregar, peça ao cliente o *código de 4 dígitos* dele e responda`,
+    `*E ${input.numeroCorrida} <código>* no grupo (ex.: E ${input.numeroCorrida} 1234).`,
   );
   return partes.join("\n");
 }
@@ -75,9 +76,27 @@ export function msgDmVencedor(input: {
 /** DM discreto ao perdedor (não responder no grupo, para não gerar ruído). */
 export const MSG_CORRIDA_JA_ACEITA = "Essa corrida já foi aceita por outro colega 🙏";
 
-/** DM ao motoboy após confirmar a entrega com "E <n>". */
+/** DM ao motoboy após confirmar a entrega com "E <n> <código>". */
 export function msgDmEntregaConfirmada(numeroCorrida: number): string {
   return `✅ Entrega da corrida #${numeroCorrida} confirmada. Valeu! 💛`;
+}
+
+/** DM ao motoboy: digitou "E <n>" sem o código — pedir para incluir. */
+export function msgDmCodigoObrigatorio(numeroCorrida: number): string {
+  return `Peça o código de 4 dígitos ao cliente e responda *E ${numeroCorrida} <código>* (ex.: E ${numeroCorrida} 1234).`;
+}
+
+/** DM ao motoboy: código digitado não confere com o do cliente. */
+export function msgDmCodigoInvalido(numeroCorrida: number): string {
+  return `Código incorreto para a corrida #${numeroCorrida}. Confirme com o cliente e tente de novo: *E ${numeroCorrida} <código>*.`;
+}
+
+/** WhatsApp do cliente ao confirmar o pedido — código para dar ao motoboy na entrega. */
+export function msgCodigoEntregaCliente(numeroPedido: number, codigo: string): string {
+  return [
+    `🔐 *Código de confirmação: ${codigo}*`,
+    `Guarde este número — informe ao motoboy só na hora de receber seu pedido #${numeroPedido}. É assim que ele confirma a entrega no sistema.`,
+  ].join("\n");
 }
 
 /** WhatsApp do cliente quando o motoboy confirma a entrega. */

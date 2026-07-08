@@ -15,7 +15,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enviarTexto, notificarGrupoMotoboys, type ZapiConfig } from "@/lib/integrations/zapi";
 import { gs, telBR } from "@/lib/format";
-import { msgCorridaGrupo } from "@/lib/mensagens-motoboys";
+import { gerarCodigoValidacao } from "@/lib/intel/status";
+import { msgCorridaGrupo, msgCodigoEntregaCliente } from "@/lib/mensagens-motoboys";
 
 export type DespachoResult = { ok: true; distribuidora: string } | { ok: false; error: string };
 
@@ -58,7 +59,7 @@ export async function dispararOrdemDistribuidora(pedidoId: string): Promise<Desp
   const { data: pedido, error: errPedido } = await admin
     .from("pedidos")
     .select(
-      "id, numero, numero_corrida, org_id, distribuidora_id, valor_total_gs, taxa_entrega_gs, distancia_km, forma_pagamento, endereco_entrega, latitude, longitude, cliente_id",
+      "id, numero, numero_corrida, org_id, distribuidora_id, valor_total_gs, taxa_entrega_gs, distancia_km, forma_pagamento, endereco_entrega, latitude, longitude, cliente_id, codigo_validacao",
     )
     .eq("id", pedidoId)
     .single();
@@ -82,6 +83,10 @@ export async function dispararOrdemDistribuidora(pedidoId: string): Promise<Desp
   const ehDinheiro = pedido.forma_pagamento === "dinheiro";
   const taxaEntrega = pedido.taxa_entrega_gs != null ? Number(pedido.taxa_entrega_gs) : null;
   const totalProdutos = Number(pedido.valor_total_gs);
+  // Código de confirmação de entrega: garante que todo pedido despachado tenha um
+  // (pedidos antigos/de outras origens podem não ter — gera na hora). O motoboy
+  // só recebe "entregue" digitando esse código, que o cliente informa na porta.
+  const codigoValidacao = pedido.codigo_validacao ?? gerarCodigoValidacao();
 
   const comanda = montarComanda({
     numero: pedido.numero,
@@ -130,20 +135,28 @@ export async function dispararOrdemDistribuidora(pedidoId: string): Promise<Desp
 
   const { error: errStatus } = await admin
     .from("pedidos")
-    .update({ status: "em_separacao" })
+    .update({ status: "em_separacao", codigo_validacao: codigoValidacao })
     .eq("id", pedidoId);
   if (errStatus) return { ok: false, error: errStatus.message };
 
-  // Avisa o cliente que o pagamento foi confirmado e o pedido entrou em separação.
-  // Só faz sentido para pagamento online — no dinheiro o bot já confirmou o pedido.
-  // Bot autônomo: a confirmação chega sem passar por atendente. Não bloqueia o despacho.
-  if (!ehDinheiro && cliente?.telefone) {
+  // Avisa o cliente. Bot autônomo: a confirmação chega sem passar por atendente.
+  // Não bloqueia o despacho (tudo aqui é best-effort).
+  if (cliente?.telefone) {
+    // Só faz sentido para pagamento online — no dinheiro o bot já confirmou o pedido
+    // no próprio fluxo, ao escolher a forma de pagamento.
+    if (!ehDinheiro) {
+      try {
+        await enviarTexto(
+          cliente.telefone,
+          `✅ *Pagamento confirmado!* Seu pedido #${pedido.numero} já está sendo separado e logo sai para entrega. 🛵🍻`,
+          zapiCfg,
+        );
+      } catch { /* não-bloqueante */ }
+    }
+    // Código de confirmação: sempre, independente da forma de pagamento — é o
+    // cliente quem informa ao motoboy na entrega, nunca o motoboy quem já sabe.
     try {
-      await enviarTexto(
-        cliente.telefone,
-        `✅ *Pagamento confirmado!* Seu pedido #${pedido.numero} já está sendo separado e logo sai para entrega. 🛵🍻`,
-        zapiCfg,
-      );
+      await enviarTexto(cliente.telefone, msgCodigoEntregaCliente(pedido.numero, codigoValidacao), zapiCfg);
     } catch { /* não-bloqueante */ }
   }
 

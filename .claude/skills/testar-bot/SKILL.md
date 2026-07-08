@@ -37,7 +37,7 @@ POST JSON com `Content-Type: application/json` (curl via Bash). Trocar só o con
 | Enquete (menu) | `{"phone":"595990000001","fromMe":false,"type":"ReceivedCallback","pollVote":{"options":[{"name":"Combo"}]}}` |
 | PIN localização | `{"phone":"595990000001","fromMe":false,"type":"ReceivedCallback","location":{"latitude":-25.5100,"longitude":-54.6100,"address":"Teste Centro"}}` |
 | Grupo: aceitar corrida | `{"phone":"<grupo_motoboys_id>","participantPhone":"<tel_motoboy>","isGroup":true,"fromMe":false,"type":"ReceivedCallback","text":{"message":"P <numero_corrida>"}}` |
-| Grupo: confirmar entrega | idem com `"E <numero_corrida>"` |
+| Grupo: confirmar entrega | idem com `"E <numero_corrida> <codigo>"` — o código é o `pedidos.codigo_validacao` (ver via MCP; o motoboy NUNCA recebe pelo sistema, só o cliente) |
 
 IDs de botão reais do fluxo V3: `btn-sim18` (idade), `btn-mais`/`btn-fim` (carrinho),
 `btn-fat-sim`/`btn-fat-nao` (fatura), `btn-pg-dinheiro`/`btn-pg-online` (pagamento).

@@ -20,7 +20,9 @@ allowed-tools: [Read, Write, Edit, Bash, Grep, Glob]
    pessoais do cliente** (privacidade: nome/telefone/PIN só no DM do vencedor).
 3. Primeiro motoboy que responde `P <numero>` ganha (claim atômico — UPDATE condicional
    em `handleMensagemGrupoMotoboys`, `grupo-motoboys.ts`). Perdedor recebe DM discreto.
-4. `E <numero>` (só o atribuído) marca entregue + notifica o cliente.
+4. `E <numero> <código>` (só o atribuído, com o código certo) marca entregue + notifica
+   o cliente. O código (4 dígitos, `pedidos.codigo_validacao`) só o CLIENTE recebe por
+   WhatsApp no despacho — o motoboy pede na porta; prova que chegou lá.
 5. Estado em `pedidos.status_entrega`: `aguardando_motoboy → atribuido → em_rota → entregue`
    (NULL = pedido fora do dispatch). Frete separado em `pedidos.taxa_entrega_gs`.
 

@@ -6,7 +6,10 @@ import "server-only";
  *   "P <numero_corrida>" → reivindica a corrida (claim ATÔMICO: um único UPDATE
  *                          condicional, sem SELECT prévio — dois motoboys no
  *                          mesmo segundo → exatamente um ganha).
- *   "E <numero_corrida>" → o motoboy atribuído confirma a entrega.
+ *   "E <numero_corrida> <código>" → o motoboy atribuído confirma a entrega.
+ *     O código (4 dígitos) é o `pedidos.codigo_validacao` que o CLIENTE recebeu
+ *     por WhatsApp ao confirmar o pedido — o motoboy pede ao cliente na porta.
+ *     Isso prova que ele chegou lá, não só que "diz" ter entregado.
  * Qualquer outra mensagem é ignorada em silêncio (motoboys conversam entre si;
  * o bot não pode responder a tudo).
  *
@@ -19,13 +22,18 @@ import {
   msgDmVencedor,
   MSG_CORRIDA_JA_ACEITA,
   msgDmEntregaConfirmada,
+  msgDmCodigoObrigatorio,
+  msgDmCodigoInvalido,
   msgClienteEntregue,
 } from "@/lib/mensagens-motoboys";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 const RE_ACEITAR = /^\s*P\s*(\d+)\s*$/i;
-const RE_ENTREGUE = /^\s*E\s*(\d+)\s*$/i;
+/** "E <corrida> <código de 4 dígitos>" — código é obrigatório (segurança de entrega). */
+const RE_ENTREGUE = /^\s*E\s*(\d+)\s+(\d{4})\s*$/i;
+/** "E <corrida>" sem código — casos que a UI antiga ainda manda; gera um lembrete. */
+const RE_ENTREGUE_SEM_CODIGO = /^\s*E\s*(\d+)\s*$/i;
 
 /** Compara IDs de grupo tolerando formatos ("...-group", "...@g.us", só dígitos). */
 export function mesmoGrupo(cadastrado: string | null, recebido: string): boolean {
@@ -63,7 +71,8 @@ export async function handleMensagemGrupoMotoboys(input: {
   // 2) Só comandos P/E interessam; o resto é conversa entre motoboys.
   const aceitar = RE_ACEITAR.exec(texto);
   const entregue = RE_ENTREGUE.exec(texto);
-  if (!aceitar && !entregue) return { acao: "ignorada" };
+  const entregueSemCodigo = !entregue ? RE_ENTREGUE_SEM_CODIGO.exec(texto) : null;
+  if (!aceitar && !entregue && !entregueSemCodigo) return { acao: "ignorada" };
 
   // 3) Identifica o motoboy pelo telefone do remetente. Não cadastrado/inativo/
   //    de outra distribuidora → ignorar sem responder (não poluir o grupo).
@@ -146,8 +155,29 @@ export async function handleMensagemGrupoMotoboys(input: {
     return { acao: "corrida-atribuida" };
   }
 
-  // "E <n>" — só o motoboy atribuído àquela corrida pode confirmar a entrega.
+  // "E <n>" sem código: se a corrida é mesmo dele, lembra de pedir o código ao
+  // cliente. Se não for dele, silêncio total (não confirma nem existência da corrida).
+  if (entregueSemCodigo) {
+    const numeroCorrida = Number.parseInt(entregueSemCodigo[1], 10);
+    const { data: minha } = await admin
+      .from("pedidos")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("distribuidora_id", dist.id)
+      .eq("numero_corrida", numeroCorrida)
+      .eq("motoboy_id", motoboy.id)
+      .in("status_entrega", ["atribuido", "em_rota"])
+      .maybeSingle();
+    if (!minha) return { acao: "ignorada" };
+    try { await enviarTexto(motoboy.telefone, msgDmCodigoObrigatorio(numeroCorrida), zapiCfg); } catch { /* não-bloqueante */ }
+    return { acao: "codigo-obrigatorio" };
+  }
+
+  // "E <n> <código>" — só o motoboy atribuído E com o código correto confirma.
+  // O código vem do cliente (msgCodigoEntregaCliente), nunca do próprio motoboy:
+  // prova que ele chegou à porta, não só que "diz" ter entregado.
   const numeroCorrida = Number.parseInt(entregue![1], 10);
+  const codigoDigitado = entregue![2];
   const { data: finalizado, error: errEntrega } = await admin
     .from("pedidos")
     .update({ status_entrega: "entregue", status: "entregue" })
@@ -155,6 +185,7 @@ export async function handleMensagemGrupoMotoboys(input: {
     .eq("distribuidora_id", dist.id)
     .eq("numero_corrida", numeroCorrida)
     .eq("motoboy_id", motoboy.id)
+    .eq("codigo_validacao", codigoDigitado)
     .in("status_entrega", ["atribuido", "em_rota"])
     .select("id, numero, cliente_id")
     .maybeSingle();
@@ -162,7 +193,24 @@ export async function handleMensagemGrupoMotoboys(input: {
     console.error("[yapa:grupo] confirmação de entrega falhou:", errEntrega.message);
     return { acao: "erro-entrega" };
   }
-  if (!finalizado) return { acao: "entrega-nao-autorizada" }; // não é dele / já entregue — silêncio
+  if (!finalizado) {
+    // Diagnóstico só para quem tem a corrida de fato: código errado → pede de
+    // novo. Corrida de outro motoboy/inexistente/já entregue → silêncio total.
+    const { data: minha } = await admin
+      .from("pedidos")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("distribuidora_id", dist.id)
+      .eq("numero_corrida", numeroCorrida)
+      .eq("motoboy_id", motoboy.id)
+      .in("status_entrega", ["atribuido", "em_rota"])
+      .maybeSingle();
+    if (minha) {
+      try { await enviarTexto(motoboy.telefone, msgDmCodigoInvalido(numeroCorrida), zapiCfg); } catch { /* não-bloqueante */ }
+      return { acao: "codigo-invalido" };
+    }
+    return { acao: "entrega-nao-autorizada" };
+  }
 
   const { data: cliente } = finalizado.cliente_id
     ? await admin.from("clientes").select("telefone").eq("id", finalizado.cliente_id).maybeSingle()

@@ -170,7 +170,8 @@ export function PedidoAcoes({
         </Button>
       </div>
 
-      {/* Código de validação */}
+      {/* Código de validação — gerado e enviado ao cliente automaticamente no
+          despacho; regenerar aqui é útil se o cliente perdeu a mensagem. */}
       <div className="space-y-2 border-t border-border pt-4">
         <Button
           variant="outline"
@@ -178,7 +179,7 @@ export function PedidoAcoes({
           disabled={pending}
           onClick={() => run(() => gerarCodigo(pedido.id))}
         >
-          <KeyRound /> {pedido.codigo_validacao ? "Gerar novo código" : "Gerar código de validação"}
+          <KeyRound /> {pedido.codigo_validacao ? "Regenerar código (reenviar manualmente ao cliente)" : "Gerar código de validação"}
         </Button>
       </div>
 
