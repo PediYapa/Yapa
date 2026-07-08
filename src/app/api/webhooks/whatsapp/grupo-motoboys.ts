@@ -84,8 +84,7 @@ export async function handleMensagemGrupoMotoboys(input: {
     .eq("org_id", orgId)
     .eq("telefone", telefone)
     .maybeSingle();
-  // DEBUG TEMP — remover após diagnosticar (ver conversa 2026-07-08).
-  console.log("[yapa:grupo:DEBUG]", { orgId, telefone, distId: dist.id, motoboy, errMotoboy: errMotoboy?.message });
+  if (errMotoboy) console.error("[yapa:grupo] erro ao buscar motoboy:", errMotoboy.message);
   if (!motoboy || !motoboy.ativo || motoboy.distribuidora_id !== dist.id) {
     console.log("[yapa:grupo] motoboy não habilitado", { telefone: telefone.slice(-4), grupo: dist.nome });
     return { acao: "motoboy-nao-habilitado" };
