@@ -20,6 +20,9 @@ todo pedido é direcionado à distribuidora ativa mais próxima cujo `raio_km` c
   `?q=-25.50,-54.61`). Se vier só o link, busque/derive as coordenadas.
 - **Raio de atuação (km)** — até onde ela entrega a partir do ponto.
 - **Recebe dinheiro?** (sim/não) — define se entra no controle D+1.
+- **Grupo de motoboys (ID Z-API)** — grupo de WhatsApp que recebe as corridas do hub
+  (campo `grupo_motoboys_id`). Como obter o ID e cadastrar a frota: skills
+  `despacho-motoboys` e `onboarding-frota`. Sem ele, o leilão não anuncia as corridas.
 
 ## Como cadastrar
 1. Pela UI: módulo **Distribuidoras → Nova distribuidora**. Preencha os campos acima.

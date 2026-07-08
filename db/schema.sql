@@ -1,8 +1,13 @@
 -- ============================================================================
--- Yapa — schema inicial (gestão do delivery de bebidas — Ciudad del Este/PY)
+-- Yapa — schema BASE (provisionamento inicial — Ciudad del Este/PY)
 -- Postgres / Supabase. Single-tenant agora (1 operação) via org_id, multi-ready.
 -- RLS em db/rls.sql. Convenção: snake_case, soft-delete (deleted_at).
 -- Schema dedicado: tudo vive em "yapa" (os clients Supabase usam db.schema="yapa").
+--
+-- ⚠️ FONTE DA VERDADE = este arquivo + db/migrations/0XX_*.sql EM ORDEM.
+-- Este arquivo é a foto do provisionamento inicial e NÃO reflete as migrations
+-- (010+: faturação, estoque_hub, motoboys, frete/corrida, drop de entregadores...).
+-- Banco novo: rodar schema.sql → rls.sql → migrations em ordem → seed.sql.
 -- ============================================================================
 
 create extension if not exists "pgcrypto";

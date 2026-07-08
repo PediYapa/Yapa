@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { gs } from "@/lib/format";
 import { taxaBrlParaGs } from "@/lib/intel/cambio";
 import { zapiConfigurado, type ZapiConfig } from "@/lib/integrations/zapi";
-import { dlocalConfigurado } from "@/lib/integrations/dlocal";
+import { gatewayStatus } from "@/lib/pagamentos/gateway";
 import type { OrgRow } from "@/lib/database.types";
 import { OrgForm, ZapiForm, CambioForm } from "./configuracoes-client";
 
@@ -115,7 +115,7 @@ export default async function ConfiguracoesPage() {
         <CardContent>
           <ul className="divide-y divide-border">
             {([
-              { nome: "DLocal (pagamentos)", ok: dlocalConfigurado() },
+              gatewayStatus(),
               { nome: "OpenAI (atendimento)", ok: !!process.env.OPENAI_API_KEY },
             ] as const).map((i) => (
               <li key={i.nome} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
@@ -125,7 +125,7 @@ export default async function ConfiguracoesPage() {
             ))}
           </ul>
           <p className="mt-3 text-xs text-muted-foreground">
-            Configurar via variáveis de ambiente no painel Vercel (DLOCAL_API_KEY, OPENAI_API_KEY).
+            Configurar via variáveis de ambiente no painel Vercel. Gateway de pagamento: ver docs/specs/gateway-pagamento.md (a contratar — dLocal não aprovada).
           </p>
         </CardContent>
       </Card>

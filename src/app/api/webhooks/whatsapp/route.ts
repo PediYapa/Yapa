@@ -5,7 +5,7 @@ import { enviarTexto, enviarImagem, enviarBotoes, enviarPoll, type ZapiConfig } 
 import { executarFluxo, tipoEntidadeDoNo, montarResumoCheckout, type ProdutoInfo, type EntidadeTipo, type FreteInfo } from "@/lib/intel/fluxo-engine";
 import { montarListaEntidade, resolverSelecaoProduto, FALLBACK_ENTIDADE } from "@/lib/intel/fluxo-entidades";
 import { recuperarOuCriarSessao, salvarSessao } from "@/lib/intel/sessao-whatsapp";
-import { createPaymentLink } from "@/lib/dlocal";
+import { getGateway } from "@/lib/pagamentos/gateway";
 import { haversineKm } from "@/lib/intel/roteamento";
 import { calcularFreteGs } from "@/lib/frete";
 import { dispararOrdemDistribuidora } from "@/lib/despacho";
@@ -524,17 +524,27 @@ export async function POST(request: Request) {
         }
 
         if (ehOnline) {
+          // Pagamento online via PORTA de gateway (lib/pagamentos) — o gateway
+          // definitivo ainda não foi contratado (dLocal não aprovada). Sem
+          // gateway ativo, sê honesto e direciona para dinheiro na entrega.
+          const gw = getGateway();
+          if (!gw) {
+            const msg = "No momento o pagamento online está indisponível. 😕 Mas você pode pagar em *dinheiro na entrega* — é só tocar no botão Dinheiro. 💵";
+            await enviarTexto(phone, msg, zapiCfg);
+            novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
+            return { avancar: false }; // mantém no nó de pagamento; pedido_pendente_id preservado
+          }
           // Cliente paga produtos + frete online (total exibido no resumo).
-          const amount = Math.round(totalPedido + (frete?.taxa_gs ?? 0));
-          const link = await createPaymentLink({ pedidoId, amount, description: `Yapa pedido #${numero}`, appUrl: url.origin });
+          const valorGs = Math.round(totalPedido + (frete?.taxa_gs ?? 0));
+          const link = await gw.criarLink({ pedidoId, valorGs, descricao: `Yapa pedido #${numero}`, appUrl: url.origin });
           if (link.ok) {
-            await admin.from("pedidos").update({ forma_pagamento: "dlocal", gateway_id: link.paymentId, gateway_status: link.status }).eq("id", pedidoId);
-            const msg = `Acesse o link seguro abaixo para concluir seu pagamento via QR Code, Transferência ou Cartão:\n${link.redirectUrl}`;
+            await admin.from("pedidos").update({ forma_pagamento: gw.formaPagamento, gateway_id: link.gatewayId, gateway_status: link.status }).eq("id", pedidoId);
+            const msg = `Acesse o link seguro abaixo para concluir seu pagamento via QR Code, Transferência ou Cartão:\n${link.url}`;
             await enviarTexto(phone, msg, zapiCfg);
             novasMensagens.push({ de: "bot", texto: msg, tipo: "texto", em: agora });
             return { avancar: true };
           }
-          console.warn("[yapa:dlocal] createPaymentLink falhou:", link.error);
+          console.warn(`[yapa:pagamentos] ${gw.id} criarLink falhou:`, link.error);
           const fb = "Tivemos um problema temporário ao gerar seu link. 😕 Por favor, tente novamente ou escolha Dinheiro.";
           await enviarTexto(phone, fb, zapiCfg);
           novasMensagens.push({ de: "bot", texto: fb, tipo: "texto", em: agora });

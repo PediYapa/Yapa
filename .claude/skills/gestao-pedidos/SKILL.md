@@ -20,13 +20,20 @@ Fonte: `src/lib/intel/status.ts` (`PEDIDO_FLUXO`, `PEDIDO_TRANSICOES`).
 - **Pedidos**: lista filtrável por status + criação manual.
 - **Detalhe do pedido**: avançar/saltar status, **rotear** (geolocalização), atribuir
   distribuidora, **registrar pagamento**, **gerar código de validação**.
-- **Despacho**: atribuir entregador e acompanhar a entrega.
+- **Entrega (leilão)**: a via principal é o dispatch de motoboys via grupo de WhatsApp
+  (`pedidos.status_entrega`, comando P/E) — ver skill `despacho-motoboys`.
+- **Despacho**: fallback manual — atribuir motoboy e acompanhar a entrega.
 - **Atendimento**: ver a conversa do WhatsApp, assumir do bot (handoff) e responder.
 
 ## Entrada automática (bot)
-Mensagens chegam em `/api/webhooks/whatsapp` → o agente (`lib/integrations/openai.ts`)
-interpreta → registra em **Atendimento**. Pedidos também podem ser criados pela API
-`POST /api/v1/pedidos` (Make/Z-API), com token de escopo `pedidos:write`.
+Mensagens chegam em `/api/webhooks/whatsapp` → **engine de fluxo** (`lib/intel/fluxo-engine.ts`,
+V3: geofence antecipado → carrinho → fatura/RUC → pagamento) cria o pedido sozinho;
+`lib/integrations/openai.ts` é só fallback de intenção fora do fluxo. Pedidos também
+podem ser criados pela API `POST /api/v1/pedidos`, com token de escopo `pedidos:write`.
+
+## Pagamento
+Dinheiro na entrega (independe de gateway) ou online via porta `lib/pagamentos/gateway.ts`
+— **nenhum gateway ativo hoje** (dLocal não aprovada; ver `docs/specs/gateway-pagamento.md`).
 
 ## Evoluir o módulo
 - Lógica de status: `src/lib/intel/status.ts` (adicione transições aqui, não espalhe).

@@ -1,147 +1,67 @@
 # SDD Master — Yapa Engine
 
 > Documento vivo. Atualizar após cada ciclo de desenvolvimento.
-> Última atualização: 2026-06-25 · Engine V2 em produção.
+> Última atualização: 2026-07-07 · **V3.0 + Yapa Partners + Dispatch de Motoboys em produção.**
+> Este arquivo é o ÍNDICE do estado do sistema; o detalhe de cada domínio vive nas specs abaixo.
 
 ---
 
-## Estado atual do sistema (produção validada)
+## Specs por domínio (fonte de detalhe)
 
-### Funil conversacional completo (9 passos)
+| Spec | Domínio |
+|------|---------|
+| `bot-v3-fluxo-inteligente.md` | Funil V3.0: geofence antecipado, Factura Legal/RUC, checkout autônomo |
+| `gateway-pagamento.md` | **Porta agnóstica de pagamento** (dLocal não aprovada; Dinelco/Asaas a contratar) |
+| `dlocal-integracao.md` | Conhecimento da API dLocal Go (adapter na prateleira) + bugs históricos |
+| `yapa-partners-hub.md` | Portal B2B `/hub` de estoque dos distribuidores (motor WIP + CSV) |
+| `dispatch-motoboys.md` | Leilão de corridas via grupos de WhatsApp (P/E, claim atômico, frete) |
+| `identidade-visual.md` | Marca PediYapa (#FFCC00 + preto) |
 
+## Estado atual em produção (resumo)
+
+### Jornada do cliente (V3.0 — autônoma, sem handoff)
 ```
-1. "oi"         → Boas-vindas
-2. Gate de idade → [Sim] → Menu | [Não] → Encerra
-3. Menu (5 categorias) → enquete WhatsApp (>3 opções auto-vira poll)
-4. Lista de produtos da categoria → poll/botões filtrado do banco
-5. Variação:
-     Cerveja → "Caixa ou Unidade?" (salvar_em_contexto="formato")
-     Pod     → "Qual sabor?" (funil dinâmico via opcoes_variacao)
-     Demais  → pula direto p/ quantidade
-6. Captura de quantidade → subtotal calculado → item no carrinho
-7. "Adicionar mais?" → [Sim] loop p/ menu | [Não] → avança
-8. Captura do nome
-9. PIN de localização → geo-routing → distribuidora atribuída
-     → Resumo de checkout enviado (itens + total em GS)
-     → Handoff para atendente
-```
-
-### O que está funcionando em produção
-- [x] Loop de carrinho (múltiplos itens, sem zerar entre voltas)
-- [x] Funil dinâmico de sabor (Pod Black Sheep → morango/menta/banana)
-- [x] Matemática de caixa (Caixa usa `preco_caixa`, Unidade usa `preco_gs`)
-- [x] PIN de localização → `match_distribuidora` → distribuidora atribuída
-- [x] Fallback fora de cobertura (permanece no nó aguardando novo PIN)
-- [x] Resumo de checkout com total somado e distribuidora
-- [x] Menu de 5 categorias como enquete (>3 opções)
-- [x] Filtro de catálogo por categoria no nó `produto`
-- [x] Reinício automático com "oi", "menu" etc.
-- [x] Conversas não duplicam (`.limit(1)` na busca)
-- [x] Fluxo corrigível diretamente no banco via SQL (sem depender do builder)
-
----
-
-## Categorias de produto (estrutura atual)
-
-```
-cerveja      → preco_gs (unidade) + preco_caixa + unidades_por_caixa
-destilado    → preco_gs
-pod          → preco_gs + opcoes_variacao (sabores)
-conveniencia → preco_gs
-combo        → preco_gs
-vape         → DESCONTINUADO (dorme no enum, invisível no app)
+"oi" → gate de idade → PIN de localização (geofence PRIMEIRO; fora do raio = reset)
+→ frete calculado por faixa de km → endereço escrito → nome → menu 5 categorias
+→ produto (caixa/unidade, sabores) → quantidade → mais itens? → Factura Legal (RUC)
+→ pagamento: Dinheiro na Entrega (ativo) | Online (via porta de gateway — HOJE indisponível)
+→ pedido criado (valor produtos + taxa_entrega_gs separados) → duplo despacho:
+  comanda → distribuidora  E  corrida → grupo de motoboys ("P <n>" reivindica)
+→ "E <n>" do motoboy = entregue + cliente notificado
 ```
 
----
+### Superfícies
+- **Bot WhatsApp** (Z-API): engine puro em `lib/intel/fluxo-engine.ts`; webhook detecta grupo × cliente.
+- **CRM interno** `/dashboard`: pedidos (com entrega/frete), atendimento, distribuidoras (com grupo de motoboys), motoboys, catálogo, faturas (RUC/CSV), financeiro D+1, fluxos (builder React Flow), usuários, tokens.
+- **Yapa Partners** `/hub`: estoque físico por distribuidora, WIP com IA, importação CSV, modo supervisão admin.
+- **Fallback manual** `/despacho`: atribuir motoboy quando ninguém aceita no grupo.
 
-## Proximos incrementos (backlog ordenado por valor)
+### Banco (schema `yapa`) — migrations 001–015 aplicadas
+Tabelas ativas: orgs, user_profiles, clientes, distribuidoras (+`grupo_motoboys_id`), produtos,
+**motoboys** (frota consolidada — `entregadores` FOI REMOVIDA na 014), pedidos (+frete/corrida/
+status_entrega), pedido_itens, entregas, pagamentos, conversas, sessoes_whatsapp, fluxos,
+api_tokens, estoque_hub, contatos, hubs/rotas/gps_pings (Fase 2/3, dormentes).
+RPC: `match_distribuidora(lat,lng)`. **Fonte da verdade do schema: `db/migrations/` em ordem**
+(schema.sql é a base histórica, não reflete 010+).
 
-### P1 — Criação real do pedido no banco
-**Problema:** o carrinho acumula em `sessoes_whatsapp` e o resumo vai via WhatsApp, mas **nenhum registro em `yapa.pedidos` ou `yapa.pedido_itens` é criado**.
-**O que falta:** na etapa de checkout (após distribuidora atribuída), inserir `pedido` + `pedido_itens` + `entrega` e limpar o carrinho da sessão.
-**Complexidade:** média. Sem nova UI necessária (pedido aparece automaticamente em `/pedidos`).
+## Backlog (ordenado por valor)
 
-### P2 — Pagamento Pix via DLocal
-**Problema:** `send-poll`/botões não têm botão de pagamento integrado. O nó `payment_dlocal` já existe no builder mas não está conectado ao checkout.
-**O que falta:** após confirmar o pedido, gerar link DLocal e enviar via `enviarLinkPagamento`. Webhook `/api/webhooks/pagamento` já existe.
-**Complexidade:** média.
+### P1 — Gateway de pagamento definitivo
+Contratar Dinelco/Asaas/similar → plugar pela porta (`docs/specs/gateway-pagamento.md`, ~1h).
+Até lá o bot opera 100% dinheiro na entrega.
 
-### P3 — Notificação da distribuidora
-**Problema:** a distribuidora não é avisada quando recebe um pedido.
-**O que falta:** ao criar o pedido (`P1`), enviar mensagem no grupo WhatsApp da distribuidora via Z-API usando `notificarDistribuidora(distribuidora.telefone, resumo)`.
-**Complexidade:** baixa (função já existe em `zapi.ts`).
+### P2 — Onboarding da frota real
+Capturar `grupo_motoboys_id` dos 5 hubs + cadastrar 30–40 pilotos (skill `onboarding-frota`).
+Validar formato real do payload de grupo da Z-API no primeiro teste (`[yapa:grupo-payload]`).
 
-### P4 — Sabor do pod no builder visual
-**Problema:** o funil de sabor funciona via lógica interna (flag `opcoes_variacao` do produto), mas **não aparece como nó** no builder React Flow. O operador não consegue ver o fluxo visualmente completo.
-**O que falta:** nó visual "seleção de sabor" ou exibir a etapa virtual no canvas quando o produto tem sabores.
-**Complexidade:** baixa/média.
+### P3 — Timeout/republicação de corrida sem resposta (dispatch v2)
+Corrida não aceita em N min → reanunciar no grupo ou alertar admin (hoje: fallback manual /despacho).
 
-### P5 — Validação de cobertura antes do pedido
-**Problema:** o cliente só descobre que está fora da cobertura ao enviar o PIN (passo 9). Poderia ser mais cedo.
-**O que falta:** perguntar o bairro/zona no início do funil e pré-validar antes de aceitar o pedido.
-**Complexidade:** média.
+### P4 — Quebra de pedido
+Item em falta → contatar cliente, sugerir substituição, reprecificar (status `quebra` já existe).
 
-### P6 — Resumo de checkout rico (imagens)
-**Problema:** o resumo é só texto. Com imagem por produto seria mais visual.
-**O que falta:** antes do texto de resumo, enviar `send-image` de cada produto do carrinho.
-**Complexidade:** baixa (função `enviarImagem` já existe).
-
----
-
-## Arquitetura do banco (estado atual)
-
-### Tabelas principais
-```sql
-yapa.conversas        → histórico de mensagens + fluxo_estado (JSONB, fonte de verdade do engine)
-yapa.sessoes_whatsapp → carrinho do cliente (CarrinhoItem[])
-yapa.fluxos           → nós e arestas do fluxo ativo (JSONB)
-yapa.produtos         → catálogo com preco_caixa, opcoes_variacao
-yapa.distribuidoras   → com latitude, longitude, raio_km
-yapa.pedidos          → (a ser populado pelo P1)
-```
-
-### Funções/RPCs
-```sql
-yapa.match_distribuidora(user_lat float8, user_lng float8) → uuid
--- Retorna distribuidora mais próxima cujo raio_km cobre o ponto. NULL se fora.
-```
-
-### Contexto do fluxo (`conversas.fluxo_estado.contexto`)
-| Chave | Quando existe | Valor |
-|-------|--------------|-------|
-| `item_pendente` | Após selecionar produto com `pede_quantidade` | `{ produto_id, nome, nome_base, preco_gs, preco_caixa }` |
-| `aguardando_sabor` | Pod com sabores selecionado | `true` |
-| `formato` | Botão "Caixa"/"Unidade" clicado | `"Caixa"` ou `"Unidade"` |
-| `distribuidora_id` | PIN recebido e processado | UUID |
-| `latitude` / `longitude` | PIN recebido | `float` |
-| `endereco` | PIN ou texto digitado | `string` |
-| `nome` | Passo de coleta do nome | `string` |
-
----
-
-## Regras de negócio consolidadas
-
-### Precificação
-```
-subtotal = formato === "Caixa" && preco_caixa > 0
-  ? preco_caixa × quantidade
-  : preco_gs × quantidade
-```
-
-### Roteamento de envio WhatsApp
-```
-botoes.length === 1–3  → send-button-list
-botoes.length === 4–12 → send-poll (fallback: texto numerado se poll falhar)
-entidade dinâmica      → montarListaEntidade → resolverModo → mesma regra acima
-```
-
-### Detecção de mensagem inbound Z-API
-```
-body.buttonsResponseMessage != null → botão clicado   → usa .buttonId + .message
-body.pollVote != null               → voto de enquete → usa .options[0].name
-body.location != null               → PIN de localização → usa .latitude/.longitude/.address
-else                                → texto livre      → usa body.text.message ou body.message
-```
+### P5 — Rastreamento GPS (Fase 2/3)
+`rotas`/`gps_pings` já referenciam motoboys; despacho por proximidade estilo Bolt.
 
 ---
 
@@ -154,18 +74,16 @@ else                                → texto livre      → usa body.text.messa
 Uma frase: o que o usuário consegue fazer que não conseguia antes.
 
 ## Usuário alvo
-cliente WhatsApp / operador / entregador / owner
+cliente WhatsApp / operador / motoboy / parceiro hub / owner
 
 ## Fluxo principal
 1. ...
 
 ## Banco de dados
-- Novas tabelas ou colunas?
-- Migration necessária?
+- Novas tabelas ou colunas? Migration necessária? (lembrar: GRANT em sequences novas!)
 
 ## Integrações
-- Z-API (envio/recebimento novo)?
-- DLocal / geo / OpenAI?
+- Z-API (envio/recebimento novo)? Gateway de pagamento (via porta)? Geo? OpenAI?
 
 ## Critérios de aceite
 - [ ] ...
