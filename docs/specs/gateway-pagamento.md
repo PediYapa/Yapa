@@ -11,9 +11,10 @@ troca seja plug-and-play: o bot, os webhooks e os painéis falam só com a **por
   se o cliente tocar "Pagar Online", responde com honestidade e direciona para
   *dinheiro na entrega* (não gera link fadado a falhar).
 - O adapter dLocal (`adapters/dlocal.ts`) fica pronto na prateleira: se a conta for
-  aprovada, basta preencher `DLOCAL_API_KEY`/`DLOCAL_SECRET` na Vercel — nada de código.
-- Env `PAYMENT_GATEWAY`: `dlocal` força; `none` desliga o online mesmo com credenciais;
-  ausente = auto (primeiro adapter configurado).
+  aprovada, basta `DLOCAL_API_KEY`/`DLOCAL_SECRET` + `PAYMENT_GATEWAY=dlocal` na Vercel — nada de código.
+- Env `PAYMENT_GATEWAY`: **opt-in explícito** — `dlocal` (ou slug futuro) liga; `none`
+  ou ausente = pagamento online desligado. Não há auto-detecção por credenciais: chaves
+  de teste esquecidas na Vercel não podem religar um gateway sem contrato.
 
 ## Arquitetura da porta
 ```

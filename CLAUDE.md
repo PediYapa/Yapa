@@ -258,12 +258,12 @@ Quando produto tem `opcoes_variacao`, webhook injeta etapa virtual via `contexto
 definitivo será contratado (Dinelco, Asaas ou similar). O bot detecta a ausência
 (`getGateway() === null`) e direciona para dinheiro na entrega com mensagem honesta.
 
-- **Porta:** `lib/pagamentos/gateway.ts` — bot/webhooks/painéis falam SÓ com ela, nunca com gateway direto. Seleção: env `PAYMENT_GATEWAY` (`dlocal`/`none`) ou auto pelo primeiro adapter com credenciais.
+- **Porta:** `lib/pagamentos/gateway.ts` — bot/webhooks/painéis falam SÓ com ela, nunca com gateway direto. Seleção: **opt-in explícito** via env `PAYMENT_GATEWAY` (ausente/`none` = online desligado; sem auto-detecção — chaves de teste esquecidas não podem religar gateway sem contrato).
 - **Plugar gateway novo:** checklist completo em `docs/specs/gateway-pagamento.md` (adapter + registro + enum `forma_pagamento` + rota webhook fina + env). ~1h de trabalho.
 - **Confirmação compartilhada:** `lib/pagamentos/confirmacao.ts` — achar pedido → gravar `gateway_id`/`gateway_status` → `pago` → duplo despacho. Idempotente. Toda rota de webhook de gateway usa isso.
 - **Padrão GET-confirm obrigatório:** nunca confiar no corpo da notificação; consultar a API do gateway via `adapter.consultar()`.
 - **Valor online = produtos + frete** (o total que o cliente viu); `valor_total_gs` segue só produtos.
-- **Adapter dLocal pronto na prateleira** (`adapters/dlocal.ts` sobre `lib/dlocal.ts`): se a conta for aprovada, basta preencher `DLOCAL_API_KEY`/`DLOCAL_SECRET` na Vercel. Conhecimento duro preservado: sem `country` no payload (link abierto/PIX BR), timeouts 12s/8s, endpoint validado por regex.
+- **Adapter dLocal pronto na prateleira** (`adapters/dlocal.ts` sobre `lib/dlocal.ts`): se a conta for aprovada, basta `DLOCAL_API_KEY`/`DLOCAL_SECRET` + `PAYMENT_GATEWAY=dlocal` na Vercel. Conhecimento duro preservado: sem `country` no payload (link abierto/PIX BR), timeouts 12s/8s, endpoint validado por regex.
 - **Legado removido (07/jul):** `lib/integrations/dlocal.ts`, `/api/webhooks/pagamento`, `actions/pagamentos.ts` — não recriar.
 
 ---

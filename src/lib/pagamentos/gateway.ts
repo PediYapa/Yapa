@@ -10,12 +10,12 @@ import "server-only";
  *
  * Como plugar um gateway novo: ver docs/specs/gateway-pagamento.md (checklist).
  *
- * Seleção do gateway ativo:
- *  - env PAYMENT_GATEWAY = "dlocal" | "none" força a escolha ("none" desliga o
- *    pagamento online mesmo com credenciais presentes);
- *  - sem a env: usa o primeiro adapter com credenciais configuradas;
- *  - nenhum configurado → null: o bot oferece só dinheiro na entrega, com
- *    mensagem honesta (nunca gera link que vai falhar).
+ * Seleção do gateway ativo — OPT-IN EXPLÍCITO:
+ *  - env PAYMENT_GATEWAY = "dlocal" (ou slug futuro) liga o adapter, se as
+ *    credenciais dele existirem; "none"/ausente = pagamento online DESLIGADO.
+ *  - Por que não auto-detectar por credenciais: sobraram chaves dLocal de teste
+ *    na Vercel e a conta NÃO foi aprovada — auto religaria um gateway sem
+ *    contrato. Ligar gateway é decisão de negócio, não efeito colateral de env.
  */
 import type { FormaPagamento } from "@/lib/database.types";
 import { dlocalGateway } from "@/lib/pagamentos/adapters/dlocal";
@@ -54,18 +54,16 @@ const ADAPTERS: Record<string, PaymentGateway> = {
   dlocal: dlocalGateway,
 };
 
-/** Gateway ativo, ou null se pagamento online está indisponível. */
+/** Gateway ativo, ou null se pagamento online está desligado/indisponível. */
 export function getGateway(): PaymentGateway | null {
-  const forcado = process.env.PAYMENT_GATEWAY?.trim().toLowerCase();
-  if (forcado === "none" || forcado === "off") return null;
-  if (forcado) {
-    const gw = ADAPTERS[forcado];
-    return gw?.configurado() ? gw : null;
+  const slug = process.env.PAYMENT_GATEWAY?.trim().toLowerCase();
+  if (!slug || slug === "none" || slug === "off") return null;
+  const gw = ADAPTERS[slug];
+  if (!gw) {
+    console.error(`[yapa:pagamentos] PAYMENT_GATEWAY="${slug}" não tem adapter registrado.`);
+    return null;
   }
-  for (const gw of Object.values(ADAPTERS)) {
-    if (gw.configurado()) return gw;
-  }
-  return null;
+  return gw.configurado() ? gw : null;
 }
 
 /** Status para painéis (ex.: card de integrações em /configuracoes). */
