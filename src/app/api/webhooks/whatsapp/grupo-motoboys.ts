@@ -78,12 +78,14 @@ export async function handleMensagemGrupoMotoboys(input: {
   //    de outra distribuidora → ignorar sem responder (não poluir o grupo).
   const telefone = participantPhone.replace(/\D/g, "");
   if (!telefone) return { acao: "sem-participante" };
-  const { data: motoboy } = await admin
+  const { data: motoboy, error: errMotoboy } = await admin
     .from("motoboys")
     .select("id, nome, telefone, distribuidora_id, ativo")
     .eq("org_id", orgId)
     .eq("telefone", telefone)
     .maybeSingle();
+  // DEBUG TEMP — remover após diagnosticar (ver conversa 2026-07-08).
+  console.log("[yapa:grupo:DEBUG]", { orgId, telefone, distId: dist.id, motoboy, errMotoboy: errMotoboy?.message });
   if (!motoboy || !motoboy.ativo || motoboy.distribuidora_id !== dist.id) {
     console.log("[yapa:grupo] motoboy não habilitado", { telefone: telefone.slice(-4), grupo: dist.nome });
     return { acao: "motoboy-nao-habilitado" };
