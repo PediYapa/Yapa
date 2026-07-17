@@ -17,8 +17,15 @@ export type PedidoStatus =
 export type Moeda = "GS" | "PIX" | "BRL";
 export type FormaPagamento = "dlocal" | "pix" | "dinheiro";
 export type EntregaStatus = "aguardando" | "coletado" | "em_entrega" | "entregue" | "cancelada";
-/** Status da entrega por motoboy (pedidos.status_entrega — dispatch via grupo de WhatsApp). */
+/** Status da entrega por motoboy (pedidos.status_entrega — dispatch via grupo de WhatsApp). Legado, mantido para orgs/pedidos que não migraram. */
 export type StatusEntregaMotoboy = "aguardando_motoboy" | "atribuido" | "em_rota" | "entregue";
+/** Evento bruto do webhook Open Delivery (Entregas Expressas) — espelha event.type 1:1. */
+export type EntregaEventoExterno =
+  | "PENDING" | "ACCEPTED" | "REJECTED"
+  | "PICKUP_ONGOING" | "ARRIVED_AT_MERCHANT" | "ORDER_PICKED"
+  | "DELIVERY_ONGOING" | "ARRIVED_AT_CUSTOMER" | "ORDER_DELIVERED"
+  | "RETURNING_TO_MERCHANT" | "RETURNED_TO_MERCHANT"
+  | "DELIVERY_FINISHED" | "CANCELLED";
 export type PagamentoStatus = "pendente" | "pago" | "estornado" | "falha";
 export type ConversaStatus = "aberta" | "pendente" | "resolvida" | "arquivada";
 export type FluxoNoTipo = "inicio" | "texto" | "imagem" | "botoes" | "produto" | "humano" | "payment_dlocal" | "external_link" | "location_capture" | "captura";
@@ -32,6 +39,11 @@ export type OrgRow = {
   zapi_token: string | null;
   zapi_client_token: string | null;
   zapi_webhook_secret: string | null;
+  entregas_expressas_client_id: string | null;
+  entregas_expressas_client_secret: string | null;
+  entregas_expressas_merchant_id: string | null;
+  entregas_expressas_webhook_secret: string | null;
+  entregas_expressas_sandbox: boolean;
   taxa_cambio_brl_gs: number;
   created_at: string;
 };
@@ -84,6 +96,13 @@ export type DistribuidoraRow = {
   ativo: boolean;
   tipo: string | null;
   grupo_motoboys_id: string | null;
+  endereco_bairro: string | null;
+  endereco_rua: string | null;
+  endereco_numero: string | null;
+  endereco_cidade: string | null;
+  endereco_estado: string | null;
+  endereco_cep: string | null;
+  endereco_pais: string;
   notas: string | null;
   created_at: string;
   updated_at: string;
@@ -186,6 +205,16 @@ export type EntregaRow = {
   horario_coleta: string | null;
   horario_entrega_prevista: string | null;
   horario_entrega_realizado: string | null;
+  provedor: string | null; // null | 'entregas_expressas'
+  provedor_delivery_id: string | null;
+  provedor_order_id: string | null;
+  evento_externo: EntregaEventoExterno | null;
+  evento_externo_em: string | null;
+  rejeicao_motivo: string | null;
+  entregador_nome: string | null;
+  entregador_telefone: string | null;
+  tracking_url: string | null;
+  preco_gs: number | null;
   notas: string | null;
   created_at: string;
   updated_at: string;
@@ -347,6 +376,17 @@ export type SessaoWhatsappRow = {
   updated_at: string;
 };
 
+/** Log de dedupe dos webhooks Open Delivery (Entregas Expressas) — 1 linha por evento único recebido. */
+export type EntregasExpressasWebhookLogRow = {
+  id: string;
+  org_id: string;
+  delivery_id: string;
+  event_type: string;
+  event_datetime: string;
+  payload: Record<string, unknown>;
+  processado_em: string;
+};
+
 type TableShape<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -373,6 +413,7 @@ export type Database = {
       contatos: TableShape<ContatoRow>;
       sessoes_whatsapp: TableShape<SessaoWhatsappRow>;
       estoque_hub: TableShape<EstoqueHubRow>;
+      entregas_expressas_webhook_log: TableShape<EntregasExpressasWebhookLogRow>;
     };
     Views: {
       clientes_metricas: { Row: ClienteMetricasRow; Relationships: [] };

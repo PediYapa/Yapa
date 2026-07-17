@@ -1,7 +1,7 @@
 # SDD Master — Yapa Engine
 
 > Documento vivo. Atualizar após cada ciclo de desenvolvimento.
-> Última atualização: 2026-07-07 · **V3.0 + Yapa Partners + Dispatch de Motoboys em produção.**
+> Última atualização: 2026-07-17 · **V3.0 + Yapa Partners + Dispatch de Motoboys em produção; Entregas Expressas (Open Delivery) em WIP.**
 > Este arquivo é o ÍNDICE do estado do sistema; o detalhe de cada domínio vive nas specs abaixo.
 
 ---
@@ -15,6 +15,7 @@
 | `dlocal-integracao.md` | Conhecimento da API dLocal Go (adapter na prateleira) + bugs históricos |
 | `yapa-partners-hub.md` | Portal B2B `/hub` de estoque dos distribuidores (motor WIP + CSV) |
 | `dispatch-motoboys.md` | Leilão de corridas via grupos de WhatsApp (P/E, claim atômico, frete) |
+| `entregas-expressas-open-delivery.md` | **WIP** — substitui dispatch-motoboys por logística terceirizada (Open Delivery/ABRASEL). Bloqueada em endereço estruturado/CEP no Paraguai |
 | `identidade-visual.md` | Marca PediYapa (#FFCC00 + preto) |
 
 ## Estado atual em produção (resumo)
@@ -45,6 +46,12 @@ RPC: `match_distribuidora(lat,lng)`. **Fonte da verdade do schema: `db/migration
 (schema.sql é a base histórica, não reflete 010+).
 
 ## Backlog (ordenado por valor)
+
+### P0 — Integração Entregas Expressas (Open Delivery)
+Substitui dispatch de motoboys por WhatsApp por logística terceirizada.
+Código de integração escrito (`docs/specs/entregas-expressas-open-delivery.md`),
+migration 017 pronta mas **não aplicada**. Bloqueada em endereço estruturado/CEP
+no Paraguai — sem isso não dá pra testar em sandbox de verdade.
 
 ### P1 — Gateway de pagamento definitivo
 Contratar Dinelco/Asaas/similar → plugar pela porta (`docs/specs/gateway-pagamento.md`, ~1h).
