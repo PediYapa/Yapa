@@ -213,6 +213,8 @@ export type EntregaRow = {
   rejeicao_motivo: string | null;
   entregador_nome: string | null;
   entregador_telefone: string | null;
+  entregador_provedor_id: string | null; // id estável do deliveryPerson na operadora
+  entregador_foto_url: string | null;
   tracking_url: string | null;
   preco_gs: number | null;
   notas: string | null;

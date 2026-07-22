@@ -323,7 +323,7 @@ Cada distribuidora tem um grupo de motoboys na Z-API (`distribuidoras.grupo_moto
 - **Frete separado:** `taxa_entrega_gs`/`distancia_km` fora de `valor_total_gs`. Faixas em `lib/frete.ts` (até 2 km 10k · 2–5 15k · 5–8 20k · >8 = fora de cobertura). Calculado logo após o PIN + match_distribuidora.
 - **Textos:** todos em `src/lib/mensagens-motoboys.ts` (ajustar copy sem tocar em lógica).
 - **status_entrega:** `aguardando_motoboy → atribuido → em_rota → entregue`; `NULL` = pedido fora do dispatch (histórico pré-feature).
-- Motoboys não têm login — CRUD no painel `/motoboys` (módulo `motoboys`); telefone é UNIQUE no formato Z-API (só dígitos).
+- Motoboys não têm login — cadastro da frota do leilão via SQL/MCP (skill `onboarding-frota`); telefone é UNIQUE no formato Z-API (só dígitos). O painel `/motoboys` (módulo `motoboys`) é, desde jul/2026, **espelho somente-leitura** dos entregadores da Entregas Expressas — agrega `yapa.entregas` por `entregador_provedor_id`, não toca em `yapa.motoboys`.
 
 ### Frota consolidada (migration 014)
 A tabela legada `entregadores` (Fase 1) foi **removida** — `motoboys` é a única fonte da verdade da frota. `entregas`, `rotas` e `gps_pings` agora referenciam `motoboys` via `motoboy_id`. O painel `/despacho` continua existindo como **fallback manual** (atribuir motoboy + avançar status de `entregas`) para quando ninguém aceita a corrida no grupo; a via principal é o leilão via WhatsApp. Não recriar `entregadores`.
@@ -446,3 +446,7 @@ Após DDL: `mcp__claude_ai_Supabase__get_advisors` (security + performance).
 | 014 | `014_consolidar_frota_motoboys.sql` | Aposenta `entregadores` (legado Fase 1); `entregas`/`rotas`/`gps_pings` repointam `entregador_id`→`motoboy_id`; contador migra p/ `motoboys` |
 | 015 | `015_grant_sequence_numero_corrida.sql` | Fix: grants ausentes em `pedidos_numero_corrida_seq` (serial criada por migration não herda `grant all on all sequences` do provisionamento inicial) |
 | 016 | `016_fix_grants_sistemico.sql` | Fix sistêmico: `estoque_hub`/`motoboys` sem grant nenhum + `ALTER DEFAULT PRIVILEGES` para toda tabela/sequence/function futura herdar automaticamente |
+| 017 | `017_entregas_expressas_open_delivery.sql` | Integração Entregas Expressas (Open Delivery/ABRASEL): campos de provedor/evento em `entregas`, credenciais na org, endereço estruturado em distribuidoras, `entregas_expressas_webhook_log` (dedupe) |
+| 018 | `018_fix_endereco_pais_default_py.sql` | Fix: DEFAULT de `distribuidoras.endereco_pais` de 'BR' → 'PY' |
+| 019 | `019_add_taxa_cambio_brl_gs.sql` | Fix drift: `orgs.taxa_cambio_brl_gs` (efeito da 002, nunca aplicada no projeto novo) |
+| 020 | `020_entregador_provedor_id_e_realtime.sql` | `entregador_provedor_id`/`entregador_foto_url` em `entregas` (espelho /motoboys) + `entregas` na publicação `supabase_realtime` (status em tempo real em /pedidos) |

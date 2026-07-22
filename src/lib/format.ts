@@ -40,6 +40,22 @@ export function dataHoraBR(value: string | Date | null | undefined): string {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(d);
 }
 
+/** Tempo relativo curto pt-BR: "agora", "há 5 min", "há 2 h", "há 3 d"; acima de 30 dias cai pra data. */
+export function tempoRelativoBR(value: string | Date | null | undefined): string {
+  if (!value) return "—";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "—";
+  const seg = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (seg < 60) return "agora";
+  const min = Math.floor(seg / 60);
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  const dias = Math.floor(h / 24);
+  if (dias <= 30) return `há ${dias} d`;
+  return dataBR(d);
+}
+
 /** Telefone BR para exibição: +5511999998888 → (11) 99999-8888 */
 export function telBR(value: string | null | undefined): string {
   if (!value) return "—";

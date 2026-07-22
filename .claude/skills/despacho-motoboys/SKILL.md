@@ -27,8 +27,11 @@ allowed-tools: [Read, Write, Edit, Bash, Grep, Glob]
    (NULL = pedido fora do dispatch). Frete separado em `pedidos.taxa_entrega_gs`.
 
 ## Cadastro
-- **Motoboy**: painel **/motoboys** — nome, telefone (formato Z-API, só dígitos, o MESMO
-  número que ele usa no grupo — senão o "P" não é reconhecido), distribuidora, ativo.
+- **Motoboy**: SQL direto em `yapa.motoboys` via MCP (skill `onboarding-frota`, Parte B) —
+  nome, telefone (formato Z-API, só dígitos, o MESMO número que ele usa no grupo — senão
+  o "P" não é reconhecido), distribuidora, ativo. **Atenção:** o painel `/motoboys` NÃO é
+  mais CRUD — desde jul/2026 é espelho somente-leitura dos entregadores da Entregas
+  Expressas (agregado de `yapa.entregas`), não mexe em `yapa.motoboys`.
 - **Grupo**: painel **/distribuidoras → editar → "Grupo de motoboys (ID Z-API)"**. Para
   obter o ID: mandar mensagem no grupo e copiar o campo `phone` do log
   `[yapa:grupo-payload]` (Vercel → runtime logs). Onboarding em lote: skill `onboarding-frota`.

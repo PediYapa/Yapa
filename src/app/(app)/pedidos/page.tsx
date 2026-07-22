@@ -9,9 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { gs, dataHoraBR } from "@/lib/format";
-import { PEDIDO_STATUS_META, STATUS_ENTREGA_MOTOBOY_META } from "@/lib/intel/status";
+import { PEDIDO_STATUS_META } from "@/lib/intel/status";
 import { cn } from "@/lib/cn";
 import { NovoPedidoButton, AprovarPagamentoButton } from "./pedidos-client";
+import { PedidosRealtimeProvider, EntregaStatusCell } from "./pedidos-realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -61,9 +62,13 @@ export default async function PedidosPage({
   const distribuidoras = (distribuidorasData ?? []) as DistribuidoraRow[];
   const distMap = new Map(distribuidoras.map((d) => [d.id, d]));
 
-  // Motoboys (nome na coluna de entrega — dispatch via grupo de WhatsApp).
-  const { data: motoboysData } = await supabase.from("motoboys").select("id, nome");
-  const motoboysMap = new Map((motoboysData ?? []).map((m) => [m.id, m.nome]));
+  // Status fino de entrega (Entregas Expressas) — estado inicial do realtime da
+  // coluna ENTREGA. Ordem cronológica: com mais de uma entrega por pedido, a
+  // mais recente vence no Map do provider.
+  const { data: entregasData } = await supabase
+    .from("entregas")
+    .select("pedido_id, evento_externo, rejeicao_motivo")
+    .order("updated_at", { ascending: true });
 
   const { data: produtosData } = await supabase
     .from("produtos")
@@ -131,6 +136,7 @@ export default async function PedidosPage({
           }
         />
       ) : (
+        <PedidosRealtimeProvider orgId={profile.org_id} inicial={entregasData ?? []}>
         <div className="rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
@@ -161,18 +167,7 @@ export default async function PedidosPage({
                     <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
                     <TableCell>{dist?.nome ?? "—"}</TableCell>
                     <TableCell>
-                      {p.status_entrega ? (
-                        <div className="space-y-0.5">
-                          <Badge variant={STATUS_ENTREGA_MOTOBOY_META[p.status_entrega].variant}>
-                            {STATUS_ENTREGA_MOTOBOY_META[p.status_entrega].label}
-                          </Badge>
-                          {p.motoboy_id && (
-                            <p className="text-xs text-muted-foreground">{motoboysMap.get(p.motoboy_id) ?? "—"}</p>
-                          )}
-                        </div>
-                      ) : (
-                        "—"
-                      )}
+                      <EntregaStatusCell pedidoId={p.id} />
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {p.documento_ruc ? p.documento_ruc : p.precisa_fatura ? <span className="text-amber-600">a informar</span> : "—"}
@@ -191,6 +186,7 @@ export default async function PedidosPage({
             </TableBody>
           </Table>
         </div>
+        </PedidosRealtimeProvider>
       )}
     </div>
   );

@@ -122,8 +122,10 @@ export async function processarEventoEntregasExpressas(input: {
   if (statusEntrega) updateEntrega.status = statusEntrega;
   if (event.rejectionInfo?.reason) updateEntrega.rejeicao_motivo = event.rejectionInfo.reason;
   if (payload.deliveryPerson) {
+    updateEntrega.entregador_provedor_id = payload.deliveryPerson.id;
     updateEntrega.entregador_nome = payload.deliveryPerson.name;
     updateEntrega.entregador_telefone = payload.deliveryPerson.phone ?? null;
+    updateEntrega.entregador_foto_url = payload.deliveryPerson.pictureURL ?? null;
   }
   if (payload.externalTrackingURL) updateEntrega.tracking_url = payload.externalTrackingURL;
   if (payload.deliveryPrice?.price?.value != null) updateEntrega.preco_gs = payload.deliveryPrice.price.value;
