@@ -310,10 +310,26 @@ WHERE id = '<auth_user_id>';
 
 ---
 
-## 11B. Dispatch de Motoboys (grupos de WhatsApp)
+## 11B. Despacho — Entregas Expressas (atual) e leilão WhatsApp (legado, hoje inerte)
 
 ### Conceito
-Cada distribuidora tem um grupo de motoboys na Z-API (`distribuidoras.grupo_motoboys_id`). Na confirmação do pedido (pago online OU dinheiro), `lib/despacho.ts` dispara **em paralelo** (Promise.allSettled) a comanda para a distribuidora e o anúncio da corrida para o grupo. O 1º motoboy que responder `P <numero_corrida>` reivindica; `E <numero_corrida>` confirma a entrega.
+Desde jul/2026, o despacho principal é via **Entregas Expressas** (Open Delivery/ABRASEL —
+`docs/specs/entregas-expressas-open-delivery.md`, validada end-to-end em sandbox): na
+confirmação do pedido (pago online OU dinheiro), `lib/despacho.ts` dispara
+**em paralelo** (Promise.allSettled) duas pernas independentes — (1) SEMPRE, uma comanda
+de separação em texto pro WhatsApp da distribuidora (o hub precisa saber o que preparar,
+com ou sem entregador automático); (2) quando a org tem credenciais, o registro da
+entrega na Entregas Expressas via `POST /v1/logistics/delivery`. A operadora aloca o
+entregador e dirige o ciclo de vida via webhooks — não há mais anúncio de corrida pro
+grupo de motoboys nesse caminho.
+
+O leilão via grupo (`P <numero_corrida>` reivindica, `E <numero_corrida>` confirma,
+descrito no resto desta seção) é o modelo **anterior** — `distribuidoras.grupo_motoboys_id`
+segue cadastrável na UI, mas nada no despacho atual anuncia corrida pro grupo
+(`msgCorridaGrupo` está definida e não é chamada em lugar nenhum) nem popula
+`pedidos.status_entrega`, então o branch de `P`/`E` em `grupo-motoboys.ts` está vivo no
+webhook mas inerte na prática. Detalhe completo do estado de cada peça órfã:
+`docs/specs/SDD-MASTER.md` § "Telas defasadas".
 
 ### Regras críticas
 - **Claim atômico:** um único UPDATE condicional (`motoboy_id IS NULL AND status_entrega='aguardando_motoboy'` + RETURNING) — nunca SELECT antes. Testado: 2 claims simultâneos → exatamente 1 vence.
@@ -322,11 +338,11 @@ Cada distribuidora tem um grupo de motoboys na Z-API (`distribuidoras.grupo_moto
 - **ID de grupo não sanitiza:** `notificarGrupoMotoboys` envia o ID cru (sufixos não-numéricos); `replace(/\D/g)` destruiria.
 - **Frete separado:** `taxa_entrega_gs`/`distancia_km` fora de `valor_total_gs`. Faixas em `lib/frete.ts` (até 2 km 10k · 2–5 15k · 5–8 20k · >8 = fora de cobertura). Calculado logo após o PIN + match_distribuidora.
 - **Textos:** todos em `src/lib/mensagens-motoboys.ts` (ajustar copy sem tocar em lógica).
-- **status_entrega:** `aguardando_motoboy → atribuido → em_rota → entregue`; `NULL` = pedido fora do dispatch (histórico pré-feature).
+- **status_entrega:** `aguardando_motoboy → atribuido → em_rota → entregue`; `NULL` = pedido fora do dispatch. **Dormente desde a migração pra Entregas Expressas** — nada no despacho atual grava `aguardando_motoboy`, então todo pedido novo fica com `status_entrega = NULL` (só pedidos históricos pré-EE têm valor aqui).
 - Motoboys não têm login — cadastro da frota do leilão via SQL/MCP (skill `onboarding-frota`); telefone é UNIQUE no formato Z-API (só dígitos). O painel `/motoboys` (módulo `motoboys`) é, desde jul/2026, **espelho somente-leitura** dos entregadores da Entregas Expressas — agrega `yapa.entregas` por `entregador_provedor_id`, não toca em `yapa.motoboys`.
 
 ### Frota consolidada (migration 014)
-A tabela legada `entregadores` (Fase 1) foi **removida** — `motoboys` é a única fonte da verdade da frota. `entregas`, `rotas` e `gps_pings` agora referenciam `motoboys` via `motoboy_id`. O painel `/despacho` continua existindo como **fallback manual** (atribuir motoboy + avançar status de `entregas`) para quando ninguém aceita a corrida no grupo; a via principal é o leilão via WhatsApp. Não recriar `entregadores`.
+A tabela legada `entregadores` (Fase 1) foi **removida** — `motoboys` é a única fonte da verdade da frota do leilão legado (`yapa.motoboys`, hoje sem novos cadastros via UI). `entregas`, `rotas` e `gps_pings` referenciam `motoboys` via `motoboy_id`. O painel `/despacho` continua existindo como **fallback manual** (atribuir motoboy + avançar status de `entregas`), mas hoje opera sem distinguir `entregas.provedor` — pode sobrescrever manualmente o status de uma entrega gerida pela Entregas Expressas, gerando inconsistência com os webhooks da operadora. Decisão sobre o destino de `/despacho` está **pendente** (ver `docs/specs/SDD-MASTER.md` § "Telas defasadas"). Não recriar `entregadores`.
 
 ## 11C. Armadilhas conhecidas (cada uma custou produção quebrada)
 

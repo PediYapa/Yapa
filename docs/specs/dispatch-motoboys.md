@@ -1,5 +1,14 @@
 # Spec: Dispatch de Motoboys via Grupos de WhatsApp
 
+> ⚠️ **Mecanismo de despacho descontinuado** em favor de
+> `docs/specs/entregas-expressas-open-delivery.md` — este documento descreve o
+> modelo ANTERIOR (leilão via grupo WhatsApp), mantido como referência histórica.
+> Na prática, o anúncio de corrida pro grupo (`msgCorridaGrupo`) não é mais chamado
+> em nenhum lugar do código atual, e nada mais popula `pedidos.status_entrega`. O
+> único conceito que sobrevive no despacho atual é a "prova de posse via código de
+> confirmação" (`pedidos.codigo_validacao`). Ver seção "Telas defasadas" em
+> `docs/specs/SDD-MASTER.md` para o estado exato de cada peça órfã.
+
 ## Objetivo
 Ao confirmar um pedido (pago online ou dinheiro na entrega), notificar simultaneamente a distribuidora e o grupo de WhatsApp de motoboys do hub; o primeiro que responder `P <numero>` reivindica a corrida de forma atômica. Frete calculado por distância, contabilizado separado dos produtos.
 

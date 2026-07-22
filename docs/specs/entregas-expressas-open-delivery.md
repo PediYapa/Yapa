@@ -1,8 +1,11 @@
 # Spec/To-do: Integração Entregas Expressas (Open Delivery / ABRASEL)
 
 > Documento vivo — checklist de implementação, não spec pós-fato como as demais.
-> Status: **WIP, sandbox não testado ainda.** Substitui o dispatch de motoboys via
-> WhatsApp (`docs/specs/dispatch-motoboys.md`) por logística terceirizada.
+> Status: **✅ Validado end-to-end em sandbox (22/jul/2026).** Substitui o dispatch de
+> motoboys via WhatsApp (`docs/specs/dispatch-motoboys.md`, hoje parcialmente
+> descontinuado) por logística terceirizada. App "Pedi Yapa open" enviado para
+> review/homologação da operadora — aguardando aprovação + credenciais de
+> **produção** (sandbox segue ativo, env vars só em Preview/Development na Vercel).
 
 ## Objetivo
 Ao confirmar um pedido (pago online ou dinheiro na entrega), registrar a entrega
@@ -14,32 +17,35 @@ operadora (ACCEPTED → PICKUP_ONGOING → ORDER_PICKED → ... → ORDER_DELIVE
 Admin Yapa (configuração de credenciais + acompanhamento no painel). O
 entregador não interage com o Yapa — é gerido inteiramente pela operadora.
 
-## 🚧 Bloqueador prioritário — endereço estruturado sem CEP real no Paraguai
-A API exige `pickupAddress`/`deliveryAddress` com `postalCode`, `street`,
-`number`, `district`, `city`, `state` (ISO 3166-2) estruturados. Hoje:
-- `yapa.clientes` só tem endereço em **texto livre** (`endereco`, `zona`,
-  `referencia`) — sem rua/número/CEP separados.
-- O Paraguai **não tem CEP amplamente adotado** como o Brasil — existe um
-  código postal formal, mas cobertura/uso são fracos fora de Assunção. Ciudad
-  del Este não tem uma malha de CEP confiável pra mapear bairro → código.
-- `country`/`state` (`PY`/`PY-11`) usados no código são **placeholders não
-  validados** — a doc da Entregas Expressas só documenta exemplos com `BR`.
+## ✅ Bloqueador prioritário (RESOLVIDO) — endereço estruturado sem CEP real no Paraguai
+~~A API exige endereço estruturado; Paraguai não tem CEP confiável~~ — **confirmado
+por teste real em sandbox (pedidos #46 e #47, 21/jul/2026):** `country: "PY"`,
+`state: "PY-11"` (placeholder Alto Paraná), `postalCode` fallback e endereço em texto
+único (`street`) foram **aceitos pela API sem erro de validação** em ambos os
+pedidos. A operadora nunca rejeitou por formato de endereço — o cancelamento do
+pedido #46 foi por `REGION_NOT_SERVED` (cobertura/raio da conta sandbox), não por
+endereço malformado. O pedido #47, com as mesmas convenções de endereço mas
+coordenadas reais dentro da cobertura, foi aceito, coletado e entregue de ponta a
+ponta.
 
-**Isso precisa ser resolvido/confirmado ANTES de qualquer teste real em
-sandbox**, porque sem saber o que a operadora aceita pra endereço fora do
-Brasil, não dá pra saber se `POST /v1/logistics/delivery` vai ser aceito.
+- [x] Entregas Expressas atende Paraguai — confirmado empiricamente
+- [x] `country="PY"`/`state="PY-11"` são aceitos pela API (sem validação rígida
+      contra uma lista fechada de estados, ao que tudo indica)
+- [ ] Refinamento de qualidade de dado (não bloqueia funcionamento): mapear bairros
+      reais de Ciudad del Este pra `district` de forma mais fiel — hoje cai no
+      fallback de zona/endereço livre (`montarEnderecoFallback` em `lib/despacho.ts`)
 
-- [ ] Perguntar direto pra Entregas Expressas: eles atendem Paraguai? Se sim,
-      qual formato esperam pra `postalCode`/`state`/`country` fora do Brasil?
-- [ ] Se não atendem Paraguai — a integração inteira precisa ser repensada
-      (nesse caso talvez o objetivo vire outro provedor, não este).
-- [ ] Se atendem: decidir entre geocoding reverso (lat/long → endereço) ou
-      captura estruturada no fluxo do bot (pedir rua/número/referência
-      separados em vez de texto livre único).
-- [ ] Mapear bairros de Ciudad del Este pra um valor de `district`/`state`
-      consistente (mesmo sem CEP formal).
+## Decisões fechadas (21/jul/2026)
+- **Open Delivery, não Full.** O app "Full" só existiu no painel deles pra
+  comparação — nunca foi implementado no código. App ativo: "Pedi Yapa open"
+  (`app_id app_pn4tur03yzk8crke`).
+- **Moeda confirmada como Guarani a nível de conta** — falta só travar o código
+  exato do campo `currency` a usar em produção. Hoje o sandbox envia sempre
+  `currency: "BRL"` (conversão via `orgs.taxa_cambio_brl_gs`, ver `gsParaBrl` em
+  `lib/despacho.ts`); precisa confirmar com a operadora se a conta de produção
+  aceita `"GS"`/`"PYG"` diretamente ou se mantém a conversão para BRL.
 
-## Fluxo principal (como desenhado — não testado em sandbox ainda)
+## Fluxo principal (validado end-to-end em sandbox, 21-22/jul/2026)
 1. Pedido confirmado (pago/dinheiro) → `dispararOrdemDistribuidora` (`lib/despacho.ts`)
 2. Monta `pickupAddress` (a partir de `distribuidoras.endereco_*`, novos campos
    estruturados da migration 017) e `deliveryAddress` (fallback do cliente —
@@ -56,7 +62,7 @@ Brasil, não dá pra saber se `POST /v1/logistics/delivery` vai ser aceito.
    ARRIVED_AT_CUSTOMER, ORDER_DELIVERED) — texto ainda em `entregas-expressas-eventos.ts`,
    não centralizado em `mensagens-motoboys.ts` como o resto (ver pendências)
 
-## Banco de dados (migration 017 — já escrita, não aplicada)
+## Banco de dados (migration 017 — aplicada)
 - `orgs`: `entregas_expressas_client_id/secret/merchant_id/webhook_secret/sandbox`
 - `distribuidoras`: `endereco_bairro/rua/numero/cidade/estado/cep/pais` (estruturado)
 - `entregas`: `provedor`, `provedor_delivery_id`, `provedor_order_id` (unique),
@@ -64,8 +70,17 @@ Brasil, não dá pra saber se `POST /v1/logistics/delivery` vai ser aceito.
   operadora), `evento_externo_em`, `rejeicao_motivo`, `entregador_nome/telefone`,
   `tracking_url`, `preco_gs`
 - `entregas_expressas_webhook_log`: dedupe por `(delivery_id, event_type, event_datetime)` UNIQUE + RLS por org
-- [ ] Aplicar migration 017 via MCP Supabase (ainda não rodada)
-- [ ] `npm run typecheck` — já limpo nesta sessão, reconfirmar após aplicar migration real
+- [x] Aplicar migration 017 via MCP Supabase
+- [x] `npm run typecheck` — limpo
+
+### Migrations de acompanhamento (018-020)
+- **018**: fix de drift — DEFAULT de `distribuidoras.endereco_pais` de `'BR'` para `'PY'`
+- **019**: fix de drift — `orgs.taxa_cambio_brl_gs` (efeito da migration 002, nunca
+  aplicada neste projeto Supabase — descoberto na reauditoria pré-teste end-to-end)
+- **020**: `entregas.entregador_provedor_id`/`entregador_foto_url` (persistidos a
+  partir de `deliveryPerson.id`/`pictureURL` do webhook) + `yapa.entregas` na
+  publicação `supabase_realtime` — suportam o espelho `/motoboys` e o status em
+  tempo real de `/pedidos`
 
 ## Integrações
 - `lib/integrations/entregas-expressas.ts`: OAuth2 client_credentials (cache
@@ -95,20 +110,49 @@ Brasil, não dá pra saber se `POST /v1/logistics/delivery` vai ser aceito.
 - [ ] Testar o par sandbox com `POST /oauth/token` assim que disponível
 
 ## Critérios de aceite
-- [x] Migration 017 escrita (idempotente, `ADD COLUMN IF NOT EXISTS`)
-- [x] Cliente HTTP com OAuth2 + cache de token
-- [x] Webhook valida HMAC (timing-safe compare)
+- [x] Migration 017 escrita (idempotente, `ADD COLUMN IF NOT EXISTS`) e **aplicada**
+- [x] Cliente HTTP com OAuth2 + cache de token — validado contra sandbox real (200,
+      bearer 64 chars, `expires_in: 86400`)
+- [x] Webhook valida HMAC (timing-safe compare) — validado com eventos reais
 - [x] Webhook idempotente (dedupe por delivery_id+event_type+event_datetime)
 - [x] `despacho.ts` migrado pra chamar a operadora em vez do grupo WhatsApp
 - [x] Conversão GS→BRL usando taxa já configurável (`orgs.taxa_cambio_brl_gs`)
 - [x] `npm run typecheck` e lint limpos
-- [ ] **Endereço estruturado real (bloqueador acima) resolvido**
-- [ ] Migration aplicada no Supabase de fato
-- [ ] Teste end-to-end em sandbox (criar entrega + simular eventos no painel deles)
-- [ ] Confirmar `country`/`state` aceitos pela operadora pra Paraguai
-- [ ] UI de configuração de credenciais e endereço estruturado
+- [x] **Endereço estruturado real (bloqueador acima) resolvido** — `country`/`state`
+      aceitos empiricamente, sem necessidade de CEP real
+- [x] Migration aplicada no Supabase de fato (017, seguida de 018/019 — fixes de
+      drift — e 020, ver abaixo)
+- [x] Teste end-to-end em sandbox: pedido criado PELO Yapa via
+      `dispararOrdemDistribuidora` → aceito no app do motoboy → coletado → entregue,
+      confirmado no app E no banco (6 webhooks processados, HMAC ok,
+      `pedidos.status=entregue`)
+- [x] Confirmar `country`/`state` aceitos pela operadora pra Paraguai
+- [x] Motoboys espelho histórico (`/motoboys`, migration 020: `entregador_provedor_id`/
+      `entregador_foto_url`) e status em tempo real (`/pedidos`, Supabase Realtime em
+      `yapa.entregas`) — entregues em produção (22/jul/2026)
+- [ ] Homologação da operadora + credenciais de **produção** (bloqueador atual, não-técnico)
+- [ ] UI de configuração de credenciais e endereço estruturado (hoje via SQL/env,
+      sem tela em `/configuracoes`)
 - [ ] Textos de notificação ao cliente centralizados (hoje hardcoded em
       `entregas-expressas-eventos.ts`, inconsistente com `mensagens-motoboys.ts`)
+
+## Checklist pós-credenciais de produção (próxima sessão)
+Quando a operadora aprovar o app e as credenciais de produção chegarem, reconfirmar
+cada item abaixo ANTES de religar em produção (env vars saem de Preview/Development
+pra Production):
+- [ ] **Moeda** — código exato do campo `currency` que a conta de produção espera
+      (`"BRL"` com conversão, ou `"GS"`/`"PYG"` nativo)
+- [ ] **Endereço/país** — reconfirmar `country`/`state` aceitos fora do sandbox (não
+      assumir que o comportamento de teste se repete 1:1 em produção)
+- [ ] **Credenciais por org** — `entregas_expressas_client_id/secret/merchant_id`
+      preenchidos na tabela `orgs` (não só env var de fallback)
+- [ ] **Cadastro de motoboy** — confirmar que a frota real está aprovada/ativa na
+      conta de produção da operadora (distinto da conta sandbox usada no teste)
+- [ ] **Forma de cobrança** — como a operadora fatura o Yapa em produção (por
+      entrega, mensalidade, etc.) — não coberto pela integração técnica
+- [ ] **Cobertura por região** — validar o raio real de atendimento em Ciudad del
+      Este antes de anunciar a feature como "sempre disponível" (o sandbox mostrou
+      que fora do raio a entrega é cancelada com `REGION_NOT_SERVED`)
 
 ## Fora do escopo (por ora)
 - Fallback automático pro WhatsApp/grupo de motoboys quando a operadora
